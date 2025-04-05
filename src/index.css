@@ -1,0 +1,228 @@
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 12 83% 55%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+
+    --accent: 12 90% 45%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 12 83% 55%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 240 10% 3.9%;
+    --sidebar-foreground: 0 0% 98%;
+    --sidebar-primary: 12 83% 55%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 0 0% 98%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 12 83% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-black text-foreground;
+  }
+}
+
+@layer components {
+  .neon-border {
+    @apply relative border border-transparent;
+  }
+
+  .neon-border::before {
+    content: '';
+    @apply absolute -inset-[1px] rounded-lg bg-gradient-to-r from-neon-purple via-neon-blue to-neon-pink z-[-1];
+    animation: rotate 3s linear infinite;
+  }
+
+  .neon-text {
+    @apply font-bold text-transparent bg-clip-text bg-gradient-to-r from-orange-600 to-red-500;
+    text-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+  }
+
+  .neon-button {
+    @apply relative inline-flex items-center justify-center px-6 py-2 overflow-hidden font-bold text-white rounded-md shadow-lg transition-all duration-300 transform hover:scale-105 active:scale-95;
+  }
+
+  .neon-button::before {
+    content: '';
+    @apply absolute inset-0 bg-gradient-to-r from-orange-500 via-red-500 to-red-600 opacity-70;
+  }
+
+  .neon-button span {
+    @apply relative z-10;
+  }
+
+  .neon-card {
+    @apply bg-gray-900 border-0 shadow-md relative overflow-hidden hover:shadow-lg transition-all duration-300;
+  }
+
+  .neon-card::after {
+    content: '';
+    @apply absolute inset-0 bg-gradient-to-r from-orange-500 via-red-500 to-red-600 opacity-10 z-[-1];
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    mask-composite: xor;
+    -webkit-mask-composite: xor;
+    pointer-events: none;
+  }
+  
+  /* Анимации для динамичного появления элементов */
+  .animate-fadeIn {
+    animation: fadeIn 0.5s ease-in-out forwards;
+  }
+  
+  .animate-slideInFromTop {
+    animation: slideInFromTop 0.5s ease-out forwards;
+  }
+  
+  .animate-slideInFromLeft {
+    animation: slideInFromLeft 0.5s ease-out forwards;
+  }
+  
+  .animate-slideInFromRight {
+    animation: slideInFromRight 0.5s ease-out forwards;
+  }
+  
+  .animate-scaleIn {
+    animation: scaleIn 0.4s ease-out forwards;
+  }
+  
+  /* Button hover animations */
+  .btn-hover-effect {
+    @apply transition-all duration-300 hover:shadow-lg hover:scale-[1.02] active:scale-[0.98];
+  }
+  
+  .tag-item {
+    @apply transition-all duration-300 hover:scale-105 hover:shadow-md cursor-pointer;
+  }
+  
+  /* Gradient tags */
+  .tag-gradient-1 {
+    @apply bg-gradient-to-r from-blue-500 to-purple-500;
+  }
+  
+  .tag-gradient-2 {
+    @apply bg-gradient-to-r from-green-400 to-blue-500;
+  }
+  
+  .tag-gradient-3 {
+    @apply bg-gradient-to-r from-purple-500 to-pink-500;
+  }
+  
+  .tag-gradient-4 {
+    @apply bg-gradient-to-r from-yellow-400 to-orange-500;
+  }
+  
+  .tag-gradient-5 {
+    @apply bg-gradient-to-r from-red-500 to-pink-500;
+  }
+  
+  /* Keyframes для анимаций */
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  
+  @keyframes slideInFromTop {
+    from { transform: translateY(-20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  
+  @keyframes slideInFromLeft {
+    from { transform: translateX(-20px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  
+  @keyframes slideInFromRight {
+    from { transform: translateX(20px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  
+  @keyframes scaleIn {
+    from { transform: scale(0.95); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+  }
+
+  .loading-screen {
+    @apply fixed inset-0 z-50 flex items-center justify-center bg-black;
+    transform: translateY(0);
+    transition: transform 0.5s ease-in-out;
+  }
+
+  .loading-screen.loaded {
+    transform: translateY(-100%);
+  }
+
+  .loading-screen .logo {
+    animation: pulse 2s infinite;
+  }
+
+  .btn-pulse {
+    animation: button-pulse 2s infinite;
+  }
+
+  @keyframes button-pulse {
+    0% {
+      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+    }
+    70% {
+      box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+    }
+  }
+
+  @keyframes rotate {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.5;
+      transform: scale(0.95);
+    }
+  }
+}
