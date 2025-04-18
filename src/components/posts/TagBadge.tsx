@@ -57,6 +57,14 @@ const TagBadge = ({ tag, onClick, className = "" }: TagBadgeProps) => {
     return { color: tag.color }; // Use tag color for text
   };
   
+  const handleClick = (e: React.MouseEvent) => {
+    if (onClick) {
+      e.preventDefault();
+      e.stopPropagation();
+      onClick();
+    }
+  };
+  
   return (
     <Badge 
       key={tag.id} 
@@ -71,7 +79,7 @@ const TagBadge = ({ tag, onClick, className = "" }: TagBadgeProps) => {
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
       }}
-      onClick={onClick}
+      onClick={handleClick}
       title={tag.name}
     >
       {tag.name}

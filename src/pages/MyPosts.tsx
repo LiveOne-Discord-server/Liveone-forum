@@ -1,10 +1,11 @@
+
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { getUserPosts } from '@/utils/admin';
 import PostCard from '@/components/posts/PostCard';
-import { Post, User } from '@/types';
+import { Post } from '@/types';
 import { ChevronLeft } from 'lucide-react';
 
 const MyPosts = () => {
@@ -25,26 +26,7 @@ const MyPosts = () => {
       
       setIsLoading(true);
       const userPostsData = await getUserPosts(user.id);
-      
-      // Make sure the data conforms to the Post type
-      const typedPosts: Post[] = userPostsData.map(post => {
-        // Ensure author has all required fields for User type
-        const author: User = {
-          id: post.author.id,
-          username: post.author.username,
-          avatar: post.author.avatar,
-          provider: post.author.provider || 'github',
-          role: post.author.role || 'user',
-          status: (post.author.status as "online" | "offline" | "dnd" | "idle") || 'online'
-        };
-        
-        return {
-          ...post,
-          author
-        } as Post;
-      });
-      
-      setPosts(typedPosts);
+      setPosts(userPostsData);
       setIsLoading(false);
     };
 

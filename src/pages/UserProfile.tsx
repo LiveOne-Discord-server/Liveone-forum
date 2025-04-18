@@ -16,8 +16,11 @@ import PostCard from '@/components/posts/PostCard';
 import { Post } from '@/types';
 import { useQuery } from '@tanstack/react-query';
 import { useIsMobile } from '@/hooks/use-mobile';
-import VoiceMessageRecorder from '@/components/chat/VoiceMessageRecorder';
+// Change this import to:
+import { VoiceMessageRecorder } from '@/components/chat/VoiceMessageRecorder';
 import FollowersList from '@/components/users/FollowersList';
+import ProfileRating from '@/components/users/ProfileRating';
+import UserAchievements from '@/components/users/UserAchievements';
 
 interface ProfileData {
   id: string;
@@ -569,6 +572,10 @@ const UserProfile = () => {
             </div>
           </div>
           
+          <div className="mt-2 mb-4">
+            <UserAchievements userId={userId} />
+          </div>
+          
           <div className="grid grid-cols-4 gap-4 mt-6 text-center">
             <div>
               <div className="text-2xl font-bold">{profile.postCount}</div>
@@ -645,6 +652,10 @@ const UserProfile = () => {
                 />
               </Button>
             </div>
+          </div>
+          
+          <div className="mt-6 border-t border-gray-700 pt-6">
+            <ProfileRating userId={userId} />
           </div>
         </div>
       </Card>
@@ -746,26 +757,46 @@ const UserProfile = () => {
                     <Send className="h-4 w-4" />
                   </Button>
                   <VoiceMessageRecorder 
-                    recipientId={userId}
-                    userId={user.id}
-                    onMessageSent={() => {
-                      const fetchMessages = async () => {
-                        if (!userId || !user) return;
+                    onSend={(audioUrl) => {
+                      if (!userId || !user) return;
+                      
+                      const sendVoiceMessage = async (url: string) => {
                         try {
-                          const { data, error } = await supabase
+                          const { error } = await supabase
                             .from('messages')
-                            .select('*')
-                            .or(`and(sender_id.eq.${userId},recipient_id.eq.${user.id}),and(sender_id.eq.${user.id},recipient_id.eq.${userId})`)
-                            .order('created_at', { ascending: false });
+                            .insert({
+                              content: 'Voice message',
+                              sender_id: user.id,
+                              recipient_id: userId,
+                              voice_url: url
+                            });
                             
                           if (error) throw error;
-                          setMessages(data || []);
+                          
+                          const fetchMessages = async () => {
+                            if (!userId || !user) return;
+                            try {
+                              const { data, error } = await supabase
+                                .from('messages')
+                                .select('*')
+                                .or(`and(sender_id.eq.${userId},recipient_id.eq.${user.id}),and(sender_id.eq.${user.id},recipient_id.eq.${userId})`)
+                                .order('created_at', { ascending: false });
+                                
+                              if (error) throw error;
+                              setMessages(data || []);
+                            } catch (error) {
+                              console.error('Error fetching messages:', error);
+                            }
+                          };
+                          
+                          fetchMessages();
                         } catch (error) {
-                          console.error('Error fetching messages:', error);
+                          console.error('Error sending voice message:', error);
+                          toast.error('Failed to send voice message');
                         }
                       };
                       
-                      fetchMessages();
+                      sendVoiceMessage(audioUrl);
                     }}
                   />
                 </div>

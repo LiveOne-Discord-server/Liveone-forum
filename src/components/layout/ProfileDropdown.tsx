@@ -32,7 +32,11 @@ const ProfileDropdown = () => {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" className="relative h-8 w-8 rounded-full">
-          <Avatar className="h-8 w-8">
+          <Avatar className={`h-8 w-8 ${
+            appUser?.role === 'admin' ? 'border-2 border-yellow-500 shadow-lg shadow-yellow-500/20' : 
+            appUser?.role === 'moderator' ? 'border-2 border-purple-500 shadow-lg shadow-purple-500/20' : 
+            ''
+          }`}>
             <AvatarImage src={appUser?.avatar || undefined} alt={appUser?.username || 'User'} />
             <AvatarFallback>{appUser?.username?.[0]?.toUpperCase() || 'U'}</AvatarFallback>
           </Avatar>

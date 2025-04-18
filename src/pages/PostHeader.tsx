@@ -3,7 +3,6 @@ import { useState } from 'react';
 import { formatDistanceToNow } from 'date-fns';
 import { Link } from 'react-router-dom';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
 import { MoreHorizontal } from 'lucide-react';
 import { Author } from '@/components/comments/types';
 import { 
@@ -14,15 +13,17 @@ import {
 } from '@/components/ui/dropdown-menu';
 import PostActions from '@/components/posts/PostActions';
 import { Post } from '@/types';
+import RoleBadge from '@/components/users/RoleBadge';
 
 interface PostHeaderProps {
   postId: string;
   title: string;
   author: Author;
   createdAt: string;
+  lastEditedAt?: string;
 }
 
-export const PostHeader = ({ postId, title, author, createdAt }: PostHeaderProps) => {
+export const PostHeader = ({ postId, title, author, createdAt, lastEditedAt }: PostHeaderProps) => {
   const [showMenu, setShowMenu] = useState(false);
   const isSmallScreen = window.innerWidth < 640;
 
@@ -55,7 +56,7 @@ export const PostHeader = ({ postId, title, author, createdAt }: PostHeaderProps
       
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-1">
-          <Avatar className="h-6 w-6 border border-gray-300 dark:border-gray-700">
+          <Avatar className={`h-6 w-6 border ${author.role === 'admin' ? 'border-yellow-500' : author.role === 'moderator' ? 'border-blue-500' : 'border-gray-300 dark:border-gray-700'}`}>
             <AvatarImage src={author.avatar_url} alt={author.username} />
             <AvatarFallback>{author.username?.charAt(0).toUpperCase()}</AvatarFallback>
           </Avatar>
@@ -64,9 +65,11 @@ export const PostHeader = ({ postId, title, author, createdAt }: PostHeaderProps
             <Link to={`/user/${author.id}`} className="text-sm font-medium hover:underline">
               {author.username}
             </Link>
-            {author.role === 'admin' && (
-              <Badge variant="default" className="px-1 py-0 h-auto text-[10px]">Admin</Badge>
+            
+            {author.role && (author.role === 'admin' || author.role === 'moderator') && (
+              <RoleBadge role={author.role} className="px-1 py-0 h-auto text-[10px]" />
             )}
+            
             {isSmallScreen && (
               <DropdownMenu open={showMenu} onOpenChange={setShowMenu}>
                 <DropdownMenuTrigger asChild>
@@ -84,6 +87,12 @@ export const PostHeader = ({ postId, title, author, createdAt }: PostHeaderProps
           <span className="text-xs text-muted-foreground">
             • {formatDistanceToNow(new Date(createdAt), { addSuffix: true })}
           </span>
+          
+          {lastEditedAt && (
+            <span className="text-xs text-muted-foreground italic">
+              • edited {formatDistanceToNow(new Date(lastEditedAt), { addSuffix: true })}
+            </span>
+          )}
         </div>
         
         {!isSmallScreen && <PostActions post={postForActions} />}

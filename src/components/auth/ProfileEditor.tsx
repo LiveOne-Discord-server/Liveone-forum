@@ -1,493 +1,382 @@
 
-import { useState, useEffect } from 'react';
-import { useAuth } from '@/hooks/useAuth';
+import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { toast } from '@/hooks/use-toast';
-import { useLanguage } from '@/hooks/useLanguage';
 import AvatarUploader from './AvatarUploader';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { User } from '@/types';
-import { AlertCircle, Loader2, Mail, Calendar, Clock, MessageSquare } from 'lucide-react';
-import { useIsMobile } from '@/hooks/use-mobile';
-import { supabase } from '@/integrations/supabase/client';
-import { formatDistanceToNow, format } from 'date-fns';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-
-interface Profile {
-  id: string;
-  username: string;
-  avatar_url?: string;
-  status?: User['status'];
-  email?: string;
-  created_at?: string;
-  banner_color?: string;
-  banner_url?: string;
-}
+import { useAuth } from '@/hooks/useAuth';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { AlertCircle, AlertTriangle } from 'lucide-react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { CirclePicker } from 'react-color';
+import { supabase } from '@/utils/supabase';
+import { toast } from '@/hooks/use-toast';
+import UserStatus from './UserStatus';
+import { uploadBannerImage } from '@/utils/bannerStorage';
 
 interface ProfileEditorProps {
   hideBannerControls?: boolean;
 }
 
 const ProfileEditor = ({ hideBannerControls = false }: ProfileEditorProps) => {
-  const { user, appUser, updateUserProfile, fetchUserProfile } = useAuth();
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [username, setUsername] = useState('');
-  const [status, setStatus] = useState<User['status']>('online');
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
+  const { appUser, updateUserProfile } = useAuth();
+  const [username, setUsername] = useState<string>('');
+  const [status, setStatus] = useState<string>('online');
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [bannerColor, setBannerColor] = useState<string>('#4f46e5');
   const [error, setError] = useState<string | null>(null);
-  const [postCount, setPostCount] = useState(0);
-  const [joinDate, setJoinDate] = useState<string | null>(null);
-  const [email, setEmail] = useState<string | null>(null);
-  const { t } = useLanguage();
-  const isMobile = useIsMobile();
-  const [activeTab, setActiveTab] = useState('general');
-  const [bannerColor, setBannerColor] = useState('#3b82f6');
-  const [bannerUrl, setBannerUrl] = useState<string | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
+  const [bannerError, setBannerError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [bannerFile, setBannerFile] = useState<File | null>(null);
+  const [bannerPreview, setBannerPreview] = useState<string | null>(null);
+  const [uploadingBanner, setUploadingBanner] = useState<boolean>(false);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
 
   useEffect(() => {
-    let isMounted = true;
-    
-    const loadProfile = async () => {
-      if (!user) {
-        if (isMounted) setIsLoading(false);
-        return;
+    if (appUser) {
+      setUsername(appUser.username || '');
+      setStatus(appUser.status || 'online');
+      setBannerColor(appUser.banner_color || '#4f46e5');
+      
+      if (appUser.banner_url) {
+        setBannerPreview(appUser.banner_url);
       }
-
-      try {
-        if (isMounted) setError(null);
-        
-        console.log('Loading profile, current appUser:', appUser);
-        
-        // Получаем email пользователя
-        if (user.email) {
-          setEmail(user.email);
-        }
-        
-        // Проверяем, есть ли уже данные в appUser
-        if (appUser && appUser.id === user.id) {
-          if (isMounted) {
-            setProfile({
-              id: appUser.id,
-              username: appUser.username || '',
-              avatar_url: appUser.avatar,
-              status: appUser.status,
-              banner_color: appUser.banner_color,
-              banner_url: appUser.banner_url
-            });
-            setUsername(appUser.username || '');
-            setStatus(appUser.status || 'online');
-            setBannerColor(appUser.banner_color || '#3b82f6');
-            setBannerUrl(appUser.banner_url || null);
-            
-            // Загружаем дополнительную информацию о пользователе
-            await loadUserStats(user.id);
-            
-            setIsLoading(false);
-          }
-          return;
-        }
-        
-        console.log('Fetching user profile for:', user.id);
-        const data = await fetchUserProfile(user.id);
-        console.log('Fetched profile data:', data);
-        
-        if (!data && isMounted) {
-          // Если профиль н�� найден, устанавливаем значения по умолчанию
-          const defaultUsername = `user_${user.id.substring(0, 6)}`;
-          setProfile({
-            id: user.id,
-            username: defaultUsername,
-            status: 'online'
-          });
-          setUsername(defaultUsername);
-          setStatus('online');
-          toast.warning(t.profile?.profileNotFound || 'Профиль не найден. Создан новый профиль.');
-          
-          // Загружаем дополнительную информацию о пользователе
-          await loadUserStats(user.id);
-          
-          setIsLoading(false);
-          return;
-        }
-
-        if (isMounted) {
-          setProfile(data);
-          setUsername(data.username || '');
-          setStatus(data.status as User['status'] || 'online');
-          setBannerColor(data.banner_color || '#3b82f6');
-          setBannerUrl(data.banner_url || null);
-          
-          // Загружаем дополнительную информацию о пользователе
-          await loadUserStats(user.id);
-          
-          setIsLoading(false);
-        }
-      } catch (error) {
-        console.error('Error fetching profile:', error);
-        if (isMounted) {
-          setError(t.profile?.loadError || 'Не удалось загрузить профиль');
-          toast.error(t.profile?.loadErrorToast || 'Ошибка при загрузке профиля. Попробуйте перезагрузить страницу.');
-          setIsLoading(false);
-        }
-      }
-    };
-    
-    // Функция для загрузки статистики пользователя
-    const loadUserStats = async (userId: string) => {
-      try {
-        // Получаем дату создания профиля
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('created_at')
-          .eq('id', userId)
-          .single();
-          
-        if (profileData?.created_at) {
-          setJoinDate(profileData.created_at);
-        }
-        
-        // Получаем количество постов пользователя
-        const { count } = await supabase
-          .from('posts')
-          .select('id', { count: 'exact', head: true })
-          .eq('author_id', userId);
-          
-        setPostCount(count || 0);
-      } catch (error) {
-        console.error('Error loading user stats:', error);
-      }
-    };
-    
-    loadProfile();
-    
-    return () => {
-      isMounted = false;
-    };
-  }, [user, fetchUserProfile, appUser, t.profile]);
-
-  const handleSaveProfile = async () => {
-    if (!user) return;
-    if (!username.trim()) {
-      toast.error(t.profile?.usernameRequired || 'Имя пользователя не может быть пустым');
-      return;
     }
+  }, [appUser]);
 
-    setIsSaving(true);
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setBannerError(null);
+    setIsSubmitting(true);
 
     try {
-      setError(null);
-      
-      // Создаем объект обновлений
-      const updates: Partial<User> = {
-        username: username.trim(),
-        status: status,
-        banner_color: bannerColor
-      };
-      
-      // Добавляем URL баннера, если он есть
-      if (bannerUrl) {
-        updates.banner_url = bannerUrl;
-      }
-      
-      // Проверяем, изменились ли данные
-      if (profile && 
-          updates.username === profile.username && 
-          updates.status === profile.status &&
-          updates.banner_color === profile.banner_color &&
-          updates.banner_url === profile.banner_url) {
-        console.log('No changes detected, skipping update');
-        toast.info(t.profile?.noChanges || 'Нет изменений для сохранения');
-        setIsSaving(false);
-        return;
-      }
-      
-      const success = await updateUserProfile(updates);
-
-      if (!success) {
-        console.error('Profile update returned false');
-        throw new Error(t.profile?.updateFailed || 'Не удалось обновить профиль');
+      // Validate username
+      if (!username.trim()) {
+        throw new Error('Username cannot be empty');
       }
 
-      console.log('Profile updated successfully');
-      toast.success(t.profile?.updateSuccess || 'Профиль успешно обновлен');
-      // Обновляем локальное состояние профиля
-      setProfile(prev => prev ? { 
-        ...prev, 
-        username: username.trim(), 
-        status,
+      // Check authentication status first
+      if (!appUser?.id) {
+        throw new Error('You need to be logged in to update your profile');
+      }
+
+      let bannerUrl = appUser?.banner_url;
+
+      // Upload banner if selected
+      if (bannerFile && appUser?.id) {
+        setUploadingBanner(true);
+        
+        try {
+          console.log('Starting banner upload process');
+          
+          bannerUrl = await uploadBannerImage(
+            bannerFile, 
+            appUser.id,
+            (progress) => setUploadProgress(progress)
+          );
+          
+          console.log('Banner uploaded successfully:', bannerUrl);
+        } catch (uploadError: any) {
+          console.error('Banner upload error details:', uploadError);
+          const errorMessage = uploadError instanceof Error ? uploadError.message : 'unknown error';
+          setBannerError(`Failed to upload banner: ${errorMessage}`);
+          toast.error(`Failed to upload banner: ${errorMessage}`);
+          setIsSubmitting(false);
+          setUploadingBanner(false);
+          setUploadProgress(0);
+          return; // Stop the submission process if banner upload fails
+        } finally {
+          setUploadingBanner(false);
+          setUploadProgress(0);
+        }
+      }
+
+      // Ensure status is one of the valid types
+      const validStatus = status as 'online' | 'offline' | 'dnd' | 'idle';
+
+      // Update profile with banner
+      console.log('Updating profile with:', { username, status: validStatus, bannerColor, bannerUrl });
+      const success = await updateUserProfile({
+        username,
+        status: validStatus,
         banner_color: bannerColor,
         banner_url: bannerUrl
-      } : null);
-    } catch (error: any) {
-      console.error('Error updating profile:', error);
-      const errorMessage = error.message || (t.profile?.updateFailed || 'Не удалось обновить профиль');
-      setError(errorMessage);
-      toast.error(errorMessage);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-  
-  const handleBannerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0 || !user) {
-      return;
-    }
-    
-    const file = e.target.files[0];
-    const fileExt = file.name.split('.').pop();
-    const filePath = `${user.id}/banner.${fileExt}`;
-    
-    setIsUploading(true);
-    
-    try {
-      const { error: uploadError } = await supabase.storage
-        .from('profile-images')
-        .upload(filePath, file, {
-          upsert: true
-        });
-      
-      if (uploadError) throw uploadError;
-      
-      const { data } = supabase.storage
-        .from('profile-images')
-        .getPublicUrl(filePath);
-      
-      if (data?.publicUrl) {
-        setBannerUrl(data.publicUrl);
-        toast.success(t.profile?.bannerUploaded || 'Banner uploaded');
+      });
+
+      if (success) {
+        toast.success("Your profile has been updated successfully");
+      } else {
+        throw new Error('Failed to update profile');
       }
-    } catch (error: any) {
-      console.error('Error uploading banner:', error);
-      toast.error(error.message || 'Error uploading banner');
+    } catch (err: any) {
+      console.error('Error updating profile:', err);
+      setError(err.message || 'An unexpected error occurred');
+      toast.error(err.message || 'Failed to update profile');
     } finally {
-      setIsUploading(false);
+      setIsSubmitting(false);
     }
   };
 
-  if (isLoading) {
-    return (
-      <Card className={isMobile ? "w-full" : ""}>
-        <CardHeader>
-          <CardTitle>{t.common?.profile}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col items-center justify-center py-8">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="mt-2 text-sm text-muted-foreground">
-              {t.common?.loading || 'Загрузка...'}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-  
-  if (error) {
-    return (
-      <Card className={isMobile ? "w-full" : ""}>
-        <CardHeader>
-          <CardTitle>{t.common?.profile}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center p-4 mb-4 text-red-800 rounded-lg bg-red-50 dark:bg-gray-800 dark:text-red-400">
-            <AlertCircle className="w-5 h-5 mr-2" />
-            <span>{error}</span>
-          </div>
-          <Button onClick={() => window.location.reload()} className="w-full">
-            {t.common?.tryAgain || 'Попробовать снова'}
-          </Button>
-        </CardContent>
-      </Card>
-    );
+  const handleBannerChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    console.log(`Selected file: ${file.name} (${file.type}, ${file.size} bytes)`);
+    
+    // Reset any previous errors
+    setBannerError(null);
+    
+    // Validate file type - accept any image file
+    if (!file.type.startsWith('image/')) {
+      setBannerError('Please select a valid image file');
+      toast.error('Please select a valid image file');
+      return;
+    }
+    
+    // Validate file size (5MB max)
+    if (file.size > 5 * 1024 * 1024) {
+      setBannerError('File size must be less than 5MB');
+      toast.error('File size must be less than 5MB');
+      return;
+    }
+    
+    setBannerFile(file);
+    
+    // Create preview
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setBannerPreview(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const uploadAndSaveBanner = async (file: File) => {
+    if (!appUser?.id) {
+      toast.error('You need to be logged in to update your banner');
+      return;
+    }
+    
+    setBannerError(null);
+    setUploadingBanner(true);
+    setUploadProgress(0);
+    
+    try {
+      console.log('Starting banner upload process');
+      
+      const bannerUrl = await uploadBannerImage(
+        file, 
+        appUser.id,
+        (progress) => setUploadProgress(progress)
+      );
+      
+      console.log('Banner uploaded successfully:', bannerUrl);
+      
+      // Auto-save the profile with the new banner
+      const { error } = await supabase
+        .from('profiles')
+        .update({ banner_url: bannerUrl })
+        .eq('id', appUser.id);
+        
+      if (error) {
+        console.error('Error updating profile with new banner:', error);
+        throw error;
+      }
+      
+      toast.success("Banner updated successfully");
+      
+    } catch (uploadError: any) {
+      console.error('Banner upload error details:', uploadError);
+      const errorMessage = uploadError instanceof Error ? uploadError.message : 'unknown error';
+      setBannerError(`Failed to upload banner: ${errorMessage}`);
+      toast.error(`Failed to upload banner: ${errorMessage}`);
+    } finally {
+      setUploadingBanner(false);
+      setUploadProgress(0);
+    }
+  };
+
+  const selectBannerFile = () => {
+    fileInputRef.current?.click();
+  };
+
+  if (!appUser) {
+    return <div>Loading profile...</div>;
   }
 
   return (
-    <Card className={isMobile ? "w-full" : ""}>
+    <Card>
       <CardHeader>
-        <CardTitle>{t.common?.profile}</CardTitle>
+        <CardTitle>Edit Profile</CardTitle>
+        <CardDescription>Update your profile information</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-6">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="general">{t.profile?.general || 'Основное'}</TabsTrigger>
-            {!hideBannerControls && (
-              <TabsTrigger value="appearance">{t.profile?.appearance || 'Внешний вид'}</TabsTrigger>
-            )}
-          </TabsList>
-          
-          <TabsContent value="general">
-            <div className="space-y-6">
-              <div className="flex flex-col items-center mb-4">
-                <AvatarUploader 
-                  currentAvatarUrl={profile?.avatar_url} 
-                  username={username} 
-                  onAvatarChange={(url) => {
-                    setProfile(prev => prev ? { ...prev, avatar_url: url } : null);
-                  }}
-                />
-              </div>
-              
-              <div className="space-y-2">
-                <Label htmlFor="username">{t.auth?.username}</Label>
-                <Input
-                  id="username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder={t.auth?.username}
-                  className="bg-gray-900 border-gray-800"
-                />
-              </div>
-              
-              <div className="space-y-2">
-                <Label htmlFor="status">{t.profile?.status}</Label>
-                <Select value={status} onValueChange={(value) => setStatus(value as User['status'])}>
-                  <SelectTrigger className="bg-gray-900 border-gray-800">
-                    <SelectValue placeholder={t.profile?.status} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="online">{t.profile?.statusOnline}</SelectItem>
-                    <SelectItem value="dnd">{t.profile?.statusDnd}</SelectItem>
-                    <SelectItem value="idle">{t.profile?.statusIdle}</SelectItem>
-                    <SelectItem value="offline">{t.profile?.statusOffline}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </TabsContent>
-          
-          {!hideBannerControls && (
-            <TabsContent value="appearance">
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <Label className="block">{t.profile?.bannerPreview || 'Предпросмотр баннера'}</Label>
-                  <div 
-                    className="w-full h-32 rounded-md bg-cover bg-center flex items-center justify-center relative"
-                    style={{
-                      backgroundColor: bannerColor || '#3b82f6',
-                      backgroundImage: bannerUrl ? `url(${bannerUrl})` : 'none'
-                    }}
-                  >
-                    {!bannerUrl && (
-                      <span className="text-white opacity-50">{t.profile?.bannerPreviewText || 'Ваш баннер'}</span>
-                    )}
-                  </div>
-                </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="bannerColor">{t.profile?.bannerColor || 'Цвет баннера'}</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="bannerColor"
-                      type="color"
-                      value={bannerColor}
-                      onChange={(e) => setBannerColor(e.target.value)}
-                      className="w-12 h-10 p-1 bg-transparent"
-                    />
-                    <Input
-                      type="text"
-                      value={bannerColor}
-                      onChange={(e) => setBannerColor(e.target.value)}
-                      className="flex-1 bg-gray-900 border-gray-800"
-                      placeholder="#3b82f6"
-                    />
-                  </div>
-                </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="bannerImage">{t.profile?.bannerImage || 'Изображение баннера'}</Label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      id="bannerImage"
-                      type="file"
-                      accept="image/*"
-                      onChange={handleBannerUpload}
-                      disabled={isUploading}
-                      className="hidden"
-                    />
-                    <Button 
-                      type="button" 
-                      variant="outline"
-                      onClick={() => document.getElementById('bannerImage')?.click()}
-                      disabled={isUploading}
-                      className="flex items-center gap-2"
-                    >
-                      {t.profile?.uploadBanner || 'Загрузить баннер'}
-                    </Button>
-                    
-                    {bannerUrl && (
-                      <Button 
-                        type="button" 
-                        variant="destructive"
-                        onClick={() => setBannerUrl(null)}
-                        disabled={isUploading}
-                        className="flex-none"
-                      >
-                        {t.common?.remove || 'Удалить'}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-                
-                <Alert>
-                  <AlertDescription>
-                    {t.profile?.gradientTipText || 'Вы можете использовать градиенты для вашего баннера, введя значения вроде "linear-gradient(to right, #ff0000, #0000ff)" в поле цвета баннера.'}
-                  </AlertDescription>
-                </Alert>
-              </div>
-            </TabsContent>
+      
+      <CardContent>
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {error && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Error</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
           )}
-        </Tabs>
-        
-        <Button 
-          onClick={handleSaveProfile} 
-          disabled={isSaving}
-          className="w-full"
-        >
-          {isSaving ? t.common?.saving : t.common?.save}
-        </Button>
-        
-        <div className="border-t border-gray-800 pt-6">
-          <h3 className="text-lg font-medium mb-4">{t.profile?.userInfo || 'Информация о пользователе'}</h3>
           
-          <div className="space-y-4">
-            {email && (
-              <div className="flex items-center gap-2">
-                <Mail className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">{email}</span>
-              </div>
-            )}
-            
-            {joinDate && (
-              <div className="flex items-center gap-2">
-                <Calendar className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">
-                  {t.profile?.joinedAt || 'Дата регистрации'}: {format(new Date(joinDate), 'dd.MM.yyyy')}
-                  <span className="ml-1 text-xs">({formatDistanceToNow(new Date(joinDate), { addSuffix: true })})</span>
-                </span>
-              </div>
-            )}
-            
-            <div className="flex items-center gap-2">
-              <MessageSquare className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">
-                {t.profile?.postCount || 'Количество постов'}: {postCount}
-              </span>
+          <div className="grid gap-4">
+            <div>
+              <Label>User ID</Label>
+              <Input
+                value={appUser.id || ''}
+                disabled
+                className="bg-gray-800 text-gray-400"
+              />
             </div>
             
-            <div className="flex items-center gap-2">
-              <Clock className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">
-                {t.profile?.lastSeen || 'Последний вход'}: {formatDistanceToNow(new Date(), { addSuffix: true })}
-              </span>
+            <div>
+              <Label>Email</Label>
+              <Input
+                value={appUser.email || ''}
+                disabled
+                className="bg-gray-800 text-gray-400"
+              />
+            </div>
+            
+            <div>
+              <Label htmlFor="username">Username</Label>
+              <Input
+                id="username"
+                placeholder="Your username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required
+              />
+            </div>
+            
+            <div>
+              <Label htmlFor="status">Status</Label>
+              <Select value={status} onValueChange={setStatus}>
+                <SelectTrigger id="status">
+                  <SelectValue placeholder="Select your status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="online">
+                    <span className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-green-500"></span> Online
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="idle">
+                    <span className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-yellow-500"></span> Idle
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="dnd">
+                    <span className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-red-500"></span> Do Not Disturb
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="offline">
+                    <span className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-gray-500"></span> Offline
+                    </span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
-        </div>
+          
+          <div className="space-y-4">
+            <div>
+              <Label>Profile Picture</Label>
+              <div className="mt-2">
+                <AvatarUploader />
+              </div>
+            </div>
+            
+            {!hideBannerControls && (
+              <>
+                <div>
+                  <Label>Banner Image</Label>
+                  <div className="mt-2 space-y-2">
+                    {bannerError && (
+                      <Alert variant="destructive" className="mb-2">
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertDescription>{bannerError}</AlertDescription>
+                      </Alert>
+                    )}
+                    <div 
+                      className="relative h-24 w-full rounded-lg bg-center bg-cover border border-gray-700" 
+                      style={{ 
+                        backgroundColor: bannerColor,
+                        backgroundImage: bannerPreview ? `url(${bannerPreview})` : undefined
+                      }}
+                    >
+                      {uploadingBanner && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 rounded-lg">
+                          <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-solid border-white border-r-transparent"></div>
+                          <div className="mt-2 text-sm text-white">{Math.round(uploadProgress)}%</div>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="flex gap-2">
+                      <Button 
+                        type="button" 
+                        variant="secondary" 
+                        size="sm"
+                        onClick={selectBannerFile}
+                        disabled={uploadingBanner}
+                      >
+                        Upload Image
+                      </Button>
+                      <input 
+                        type="file" 
+                        ref={fileInputRef} 
+                        className="hidden" 
+                        accept="image/*"
+                        onChange={handleBannerChange}
+                      />
+                    </div>
+                  </div>
+                </div>
+                
+                <div>
+                  <Label>Banner Color</Label>
+                  <div className="mt-2">
+                    <CirclePicker 
+                      color={bannerColor}
+                      onChange={(color) => setBannerColor(color.hex)}
+                      width="100%"
+                      circleSize={24}
+                      circleSpacing={12}
+                      colors={[
+                        '#f44336', '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', '#2196f3', 
+                        '#03a9f4', '#00bcd4', '#009688', '#4caf50', '#8bc34a', '#cddc39',
+                        '#ffeb3b', '#ffc107', '#ff9800', '#ff5722', '#795548', '#607d8b'
+                      ]}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+          
+          <div className="flex justify-end">
+            <Button 
+              type="submit" 
+              disabled={isSubmitting || uploadingBanner}
+              className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600"
+            >
+              {isSubmitting ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </div>
+        </form>
       </CardContent>
     </Card>
   );

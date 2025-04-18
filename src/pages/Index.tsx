@@ -1,46 +1,51 @@
 
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import PostList from '@/components/posts/PostList';
 import Logo from '@/components/ui/Logo';
-import { PenSquare, Search, Tag } from 'lucide-react';
+import { PenSquare } from 'lucide-react';
 import { useLanguage } from '@/hooks/useLanguage';
+import { supabase } from '@/utils/supabase';
+import LoadingScreen from '@/components/ui/LoadingScreen';
 
 const Index = () => {
-  const { isAuthenticated } = useAuth();
-  const [isLoading, setIsLoading] = useState(true);
+  const { isAuthenticated, isLoading } = useAuth();
   const { t } = useLanguage();
+  const [pageLoading, setPageLoading] = useState(true);
 
   useEffect(() => {
-    // Simulating loading screen
+    // Set initial loading to false after a short delay
     const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 2000);
-
+      setPageLoading(false);
+    }, 500);
+    
     return () => clearTimeout(timer);
   }, []);
 
-  if (isLoading) {
-    return (
-      <div className="loading-screen animate-fadeIn">
-        <div className="flex flex-col items-center justify-center animate-slideInFromTop">
-          <Logo size="lg" animated />
-          <div className="mt-8 w-12 h-1 relative">
-            <div className="absolute top-0 mt-1 w-12 h-1 bg-gray-900 rounded-full"></div>
-            <div 
-              className="absolute top-0 mt-1 h-1 bg-gradient-to-r from-orange-500 to-red-500 rounded-full animate-pulse"
-              style={{ 
-                width: '80%', 
-                animation: 'pulse 1.5s ease-in-out 0.5s infinite',
-                boxShadow: '0 0 10px rgba(244, 67, 54, 0.5)'
-              }}
-            ></div>
-          </div>
-        </div>
-      </div>
-    );
+  useEffect(() => {
+    // Add moderators - only run this once
+    const addModerators = async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke('add_moderators');
+        
+        if (error) {
+          console.error('Error adding moderators:', error);
+        } else {
+          console.log('Moderators added:', data);
+        }
+      } catch (e) {
+        console.error('Exception adding moderators:', e);
+      }
+    };
+    
+    // Call this function on first page load to ensure moderators are set up
+    addModerators();
+  }, []);
+
+  if (pageLoading) {
+    return <LoadingScreen duration={1000} />;
   }
 
   return (
@@ -59,7 +64,7 @@ const Index = () => {
         </div>
         
         <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-800">
-          <h2 className="text-lg font-medium mb-4">{t.posts.searchAndFilter || 'Поиск и фильтрация'}</h2>
+          <h2 className="text-lg font-medium mb-4">{t.posts.searchAndFilter || 'Search and Filter'}</h2>
           <PostList />
         </div>
       </div>

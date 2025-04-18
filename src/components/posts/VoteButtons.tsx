@@ -1,133 +1,140 @@
 
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { ThumbsUp, ThumbsDown } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { toast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
-import { useQueryClient } from "@tanstack/react-query";
-import { useAuth } from "@/hooks/useAuth";
+import React, { useState } from 'react';
+import { ThumbsUp, ThumbsDown } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/utils/supabase';
+import toast from '@/hooks/use-toast';
+import { applyVoteAnimation } from '@/lib/utils';
 
 interface VoteButtonsProps {
   postId: string;
   initialUpvotes: number;
   initialDownvotes: number;
-  userVote: 'up' | 'down' | null;
+  userVote?: "up" | "down" | null;
 }
 
-const VoteButtons: React.FC<VoteButtonsProps> = ({ 
-  postId, 
-  initialUpvotes, 
-  initialDownvotes, 
-  userVote: initialUserVote 
-}) => {
+const VoteButtons = ({ postId, initialUpvotes, initialDownvotes, userVote = null }: VoteButtonsProps) => {
   const { user, isAuthenticated } = useAuth();
-  const [vote, setVote] = useState<'up' | 'down' | null>(initialUserVote || null);
-  const [voteCount, setVoteCount] = useState({
-    up: initialUpvotes,
-    down: initialDownvotes
-  });
-  const queryClient = useQueryClient();
-
-  const handleVote = async (voteType: 'up' | 'down') => {
-    if (!isAuthenticated) {
-      toast.error("You need to sign in to vote");
+  const [upvotes, setUpvotes] = useState(initialUpvotes);
+  const [downvotes, setDownvotes] = useState(initialDownvotes);
+  const [currentVote, setCurrentVote] = useState<"up" | "down" | null>(userVote);
+  const [isVoting, setIsVoting] = useState(false);
+  
+  const handleVote = async (voteType: "up" | "down") => {
+    if (!isAuthenticated || !user) {
+      toast.error("You must be logged in to vote.");
       return;
     }
-
+    
+    if (isVoting) return;
+    setIsVoting(true);
+    
+    const isUpvote = voteType === "up";
+    const isDownvote = voteType === "down";
+    
+    const elementId = isUpvote ? `upvote-button-${postId}` : `downvote-button-${postId}`;
+    const element = document.getElementById(elementId);
+    
+    if (element) {
+      // Convert "up" to "like" and "down" to "dislike" for the animation function
+      const animationType = voteType === "up" ? "like" : "dislike";
+      applyVoteAnimation(element, animationType);
+    }
+    
     try {
-      // Check if user has already voted
-      const { data: existingVote } = await supabase
-        .from('votes')
-        .select('*')
-        .eq('user_id', user!.id)
-        .eq('post_id', postId)
-        .single();
+      // Optimistically update the vote count
+      if (currentVote === "up" && voteType === "down") {
+        setUpvotes(prev => Math.max(0, prev - 1));
+        setDownvotes(prev => prev + 1);
+      } else if (currentVote === "down" && voteType === "up") {
+        setDownvotes(prev => Math.max(0, prev - 1));
+        setUpvotes(prev => prev + 1);
+      } else if (currentVote === "up" && voteType === "up") {
+        setUpvotes(prev => Math.max(0, prev - 1));
+      } else if (currentVote === "down" && voteType === "down") {
+        setDownvotes(prev => Math.max(0, prev - 1));
+      } else if (currentVote === null && voteType === "up") {
+        setUpvotes(prev => prev + 1);
+      } else if (currentVote === null && voteType === "down") {
+        setDownvotes(prev => prev + 1);
+      }
       
-      if (existingVote) {
-        // User has already voted, so update or delete the vote
-        if (existingVote.vote_type === voteType) {
-          // Remove the vote if clicking the same button
-          await supabase
-            .from('votes')
-            .delete()
-            .eq('user_id', user!.id)
-            .eq('post_id', postId);
-            
-          setVote(null);
-          setVoteCount(prev => ({
-            ...prev,
-            [voteType]: prev[voteType] - 1
-          }));
-        } else {
-          // Change the vote type
-          await supabase
-            .from('votes')
-            .update({ vote_type: voteType })
-            .eq('user_id', user!.id)
-            .eq('post_id', postId);
-            
-          setVote(voteType);
-          setVoteCount(prev => ({
-            up: voteType === 'up' ? prev.up + 1 : prev.up - (existingVote.vote_type === 'up' ? 1 : 0),
-            down: voteType === 'down' ? prev.down + 1 : prev.down - (existingVote.vote_type === 'down' ? 1 : 0)
-          }));
-        }
-      } else {
-        // Insert a new vote
-        await supabase
+      // Determine the new vote state
+      const newVote = currentVote === voteType ? null : voteType;
+      setCurrentVote(newVote);
+      
+      // Use a direct query instead of RPC function
+      if (newVote === null) {
+        // Remove the vote
+        const { error } = await supabase
+          .from('votes')
+          .delete()
+          .eq('post_id', postId)
+          .eq('user_id', user.id);
+          
+        if (error) throw error;
+      } else if (currentVote === null) {
+        // Insert new vote
+        const { error } = await supabase
           .from('votes')
           .insert({
-            user_id: user!.id,
             post_id: postId,
-            vote_type: voteType
+            user_id: user.id,
+            vote_type: newVote
           });
           
-        setVote(voteType);
-        setVoteCount(prev => ({
-          ...prev,
-          [voteType]: prev[voteType] + 1
-        }));
+        if (error) throw error;
+      } else {
+        // Update existing vote
+        const { error } = await supabase
+          .from('votes')
+          .update({ vote_type: newVote })
+          .eq('post_id', postId)
+          .eq('user_id', user.id);
+          
+        if (error) throw error;
       }
-
-      // Invalidate posts query to update UI
-      queryClient.invalidateQueries({ queryKey: ['posts'] });
+    } catch (error: any) {
+      console.error("Error voting:", error);
+      toast.error("Failed to register vote: " + error.message);
       
-    } catch (error) {
-      console.error('Error voting:', error);
-      toast.error('Failed to register your vote');
+      // Revert optimistic update on error
+      setUpvotes(initialUpvotes);
+      setDownvotes(initialDownvotes);
+      setCurrentVote(userVote);
+    } finally {
+      setIsVoting(false);
     }
   };
-
+  
   return (
-    <div className="flex items-center">
-      <Button 
-        variant="ghost" 
-        size="sm" 
-        className={cn(
-          "px-2",
-          vote === 'up' && "text-neon-orange"
-        )}
-        onClick={() => handleVote('up')}
+    <div className="flex items-center space-x-2">
+      <Button
+        id={`upvote-button-${postId}`}
+        variant="outline"
+        size="sm"
+        className={`flex items-center ${currentVote === "up" ? 'text-green-500' : ''}`}
+        onClick={() => handleVote("up")}
+        disabled={isVoting}
       >
-        <ThumbsUp className="h-4 w-4 mr-1" />
-        <span>{voteCount.up}</span>
+        <ThumbsUp className="mr-2 h-4 w-4" />
+        <span>{upvotes}</span>
       </Button>
-      
-      <Button 
-        variant="ghost" 
-        size="sm" 
-        className={cn(
-          "px-2",
-          vote === 'down' && "text-destructive"
-        )}
-        onClick={() => handleVote('down')}
+      <Button
+        id={`downvote-button-${postId}`}
+        variant="outline"
+        size="sm"
+        className={`flex items-center ${currentVote === "down" ? 'text-red-500' : ''}`}
+        onClick={() => handleVote("down")}
+        disabled={isVoting}
       >
-        <ThumbsDown className="h-4 w-4 mr-1" />
-        <span>{voteCount.down}</span>
+        <ThumbsDown className="mr-2 h-4 w-4" />
+        <span>{downvotes}</span>
       </Button>
     </div>
   );
 };
 
 export default VoteButtons;
+export type { VoteButtonsProps };

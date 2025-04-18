@@ -1,177 +1,171 @@
 
-import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useState, useRef, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
-import { useLanguage } from '@/hooks/useLanguage';
+import { supabase } from '@/utils/supabase';
+import { useTranslation } from '@/hooks/useTranslation';
+import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { ChevronLeft, Send } from 'lucide-react';
-import { Textarea } from '@/components/ui/textarea';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { format } from 'date-fns';
-import { useIsMobile } from '@/hooks/use-mobile';
+import { Search, ArrowDown, Send, Paperclip, X } from 'lucide-react';
+import { VoiceMessageRecorder } from '@/components/chat/VoiceMessageRecorder';
+import AudioMessage from '@/components/chat/AudioMessage';
+import MediaMessage from '@/components/chat/MediaMessage';
+import MediaUploader from '@/components/chat/MediaUploader';
+import { format, isValid, parseISO } from 'date-fns';
+import { ru } from 'date-fns/locale';
 
+// Message type definition
 interface Message {
   id: string;
   content: string;
   sender_id: string;
   recipient_id: string;
   created_at: string;
-  read_at: string | null;
-  sender?: {
-    username: string;
-    avatar_url: string;
-  };
+  media_url?: string;
+  media_type?: string;
+  file_name?: string;
 }
 
-interface UserProfile {
-  id: string;
-  username: string;
-  avatar_url: string;
+// Message group by date
+interface MessageGroup {
+  date: string;
+  messages: Message[];
 }
 
-const Messages = () => {
-  const { userId } = useParams<{ userId: string }>();
-  const { user, appUser, isAuthenticated } = useAuth();
-  const [recipient, setRecipient] = useState<UserProfile | null>(null);
+export function Messages() {
+  const { user } = useAuth();
+  const { userId } = useParams();
+  const { t } = useTranslation();
+  
   const [messages, setMessages] = useState<Message[]>([]);
-  const [messageContent, setMessageContent] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSending, setIsSending] = useState(false);
-  const navigate = useNavigate();
-  const { t } = useLanguage();
-  const isMobile = useIsMobile();
+  const [messageGroups, setMessageGroups] = useState<MessageGroup[]>([]);
+  const [recipient, setRecipient] = useState<any>(null);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showScrollButton, setShowScrollButton] = useState(false);
+  const [content, setContent] = useState('');
+  
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const sendMediaMessage = async (mediaUrl: string, mediaType: string, fileName?: string) => {
+    if (!user || !recipient) return;
+    
+    try {
+      const { error } = await supabase
+        .from('messages')
+        .insert({
+          content: mediaType === 'image' ? 'Image' : 
+                  mediaType === 'video' ? 'Video' : 
+                  mediaType === 'voice' ? 'Voice message' : 'File',
+          sender_id: user.id,
+          recipient_id: recipient.id,
+          media_url: mediaUrl,
+          media_type: mediaType,
+          file_name: fileName
+        });
+
+      if (error) throw error;
+      
+      toast.success(t.messages?.sendSuccess || 'Media sent');
+      
+      loadMessages();
+    } catch (error) {
+      console.error('Error sending media message:', error);
+      toast.error(t.messages?.sendError || 'Failed to send media');
+    }
+  };
+
+  const loadMessages = async () => {
+    if (!user || !userId) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .or(`and(sender_id.eq.${user.id},recipient_id.eq.${userId}),and(sender_id.eq.${userId},recipient_id.eq.${user.id})`)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      setMessages(data || []);
+      
+      // Group messages by date
+      groupMessagesByDate(data || []);
+      
+      scrollToBottom();
+    } catch (error) {
+      console.error('Error loading messages:', error);
+      toast.error(t.messages?.loadError || 'Failed to load messages');
+    }
+  };
+
+  const groupMessagesByDate = (messages: Message[]) => {
+    const groups: Record<string, Message[]> = {};
+    
+    messages.forEach(message => {
+      try {
+        // Make sure the date is valid before processing
+        const messageDate = parseISO(message.created_at);
+        if (!isValid(messageDate)) {
+          console.error('Invalid date:', message.created_at);
+          return;
+        }
+        
+        const date = messageDate.toLocaleDateString();
+        if (!groups[date]) {
+          groups[date] = [];
+        }
+        groups[date].push(message);
+      } catch (error) {
+        console.error('Error parsing date:', message.created_at, error);
+        // Skip messages with invalid dates
+      }
+    });
+    
+    const groupArray = Object.entries(groups).map(([date, messages]) => ({
+      date,
+      messages
+    }));
+    
+    setMessageGroups(groupArray);
+  };
+
+  const loadRecipient = async () => {
+    if (!userId) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+
+      if (error) throw error;
+      setRecipient(data);
+    } catch (error) {
+      console.error('Error loading recipient:', error);
+      toast.error(t.messages?.recipientLoadError || 'Failed to load recipient');
+    }
+  };
 
   useEffect(() => {
-    if (!isAuthenticated || !user) {
-      toast.error(t.auth?.pleaseSignIn || 'Please sign in to view messages');
-      navigate('/');
-      return;
-    }
-
-    if (!userId) {
-      return;
-    }
-
-    const loadRecipient = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('id, username, avatar_url')
-          .eq('id', userId)
-          .single();
-
-        if (error) throw error;
-        setRecipient(data);
-      } catch (error) {
-        console.error('Error loading recipient:', error);
-        toast.error(t.messages?.recipientNotFound || 'Could not find recipient');
-        navigate('/');
-      }
-    };
-
-    const loadMessages = async () => {
-      if (!user) return;
-      
-      try {
-        // First, get all messages between these two users
-        const { data, error } = await supabase
-          .from('messages')
-          .select('*')
-          .or(`sender_id.eq.${user.id},recipient_id.eq.${user.id}`)
-          .or(`sender_id.eq.${userId},recipient_id.eq.${userId}`)
-          .order('created_at', { ascending: true });
-
-        if (error) throw error;
-        
-        // Filter messages to only include conversation between these two users
-        const conversationMessages = data.filter(
-          message => 
-            (message.sender_id === user.id && message.recipient_id === userId) || 
-            (message.sender_id === userId && message.recipient_id === user.id)
-        );
-
-        // Get sender info for each message
-        const messageWithSenders: Message[] = await Promise.all(
-          conversationMessages.map(async (message) => {
-            if (message.sender_id === user.id) {
-              // Current user is the sender
-              return {
-                ...message,
-                sender: {
-                  username: appUser?.username || 'You',
-                  avatar_url: appUser?.avatar || ''
-                }
-              };
-            } else {
-              // Get sender info from profiles
-              const { data: senderData } = await supabase
-                .from('profiles')
-                .select('username, avatar_url')
-                .eq('id', message.sender_id)
-                .single();
-                
-              return {
-                ...message,
-                sender: {
-                  username: senderData?.username || 'Unknown',
-                  avatar_url: senderData?.avatar_url || ''
-                }
-              };
-            }
-          })
-        );
-        
-        setMessages(messageWithSenders);
-        
-        // Mark unread messages as read
-        const unreadMessages = conversationMessages.filter(
-          message => message.recipient_id === user.id && !message.read_at
-        );
-        
-        if (unreadMessages.length > 0) {
-          const unreadIds = unreadMessages.map(msg => msg.id);
-          await supabase
-            .from('messages')
-            .update({ read_at: new Date().toISOString() })
-            .in('id', unreadIds);
-        }
-      } catch (error) {
-        console.error('Error loading messages:', error);
-        toast.error(t.messages?.loadError || 'Failed to load messages');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadRecipient();
     loadMessages();
-    
-    // Set up subscription to listen for new messages
+    loadRecipient();
+
     const channel = supabase
-      .channel('messages-channel')
+      .channel('messages')
       .on(
         'postgres_changes',
         {
-          event: 'INSERT',
+          event: '*',
           schema: 'public',
           table: 'messages',
-          filter: `recipient_id=eq.${user.id}`
+          filter: `or(and(sender_id.eq.${user?.id},recipient_id.eq.${userId}),and(sender_id.eq.${userId},recipient_id.eq.${user?.id}))`,
         },
         (payload) => {
-          // Only handle messages from this conversation
-          if (payload.new && payload.new.sender_id === userId) {
-            loadMessages();
-            
-            // Show notification
-            if (appUser) {
-              toast.success(t.messages?.newMessage || 'New message', {
-                description: `${recipient?.username || 'Someone'} sent you a message`,
-              });
-            }
-          }
+          loadMessages();
         }
       )
       .subscribe();
@@ -179,179 +173,289 @@ const Messages = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user, userId, navigate, t, isAuthenticated, appUser]);
+  }, [userId, user]);
 
   const sendMessage = async () => {
-    if (!user || !recipient || !messageContent.trim()) return;
-    
-    setIsSending(true);
+    if (!user || !recipient || !content.trim()) return;
+
     try {
       const { error } = await supabase
         .from('messages')
         .insert({
-          content: messageContent.trim(),
+          content: content.trim(),
           sender_id: user.id,
-          recipient_id: recipient.id
+          recipient_id: recipient.id,
         });
 
       if (error) throw error;
-      
-      setMessageContent('');
-      toast.success(t.messages?.sendSuccess || 'Message sent', {
-        description: 'Your message has been sent successfully'
-      });
-      
-      // Add the new message to the state
-      setMessages(prev => [
-        ...prev,
-        {
-          id: Math.random().toString(), // temporary ID until the page refreshes
-          content: messageContent.trim(),
-          sender_id: user.id,
-          recipient_id: recipient.id,
-          created_at: new Date().toISOString(),
-          read_at: null,
-          sender: {
-            username: appUser?.username || 'You',
-            avatar_url: appUser?.avatar || ''
-          }
-        }
-      ]);
+      setContent('');
+      loadMessages();
     } catch (error) {
       console.error('Error sending message:', error);
       toast.error(t.messages?.sendError || 'Failed to send message');
-    } finally {
-      setIsSending(false);
     }
   };
 
-  if (!isAuthenticated || !user) {
-    return null;
-  }
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.altKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setShowSearch(true);
+        searchInputRef.current?.focus();
+      }
+    };
 
-  if (isLoading) {
-    return (
-      <div className={`container ${isMobile ? 'px-4' : 'max-w-3xl'} mx-auto py-6`}>
-        <div className="flex flex-col items-center justify-center h-[300px]">
-          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-gray-300"></div>
-          <p className="mt-4 text-sm text-gray-400">{t.common?.loading || 'Loading...'}</p>
-        </div>
-      </div>
-    );
-  }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
-  if (!recipient) {
-    return (
-      <div className={`container ${isMobile ? 'px-4' : 'max-w-3xl'} mx-auto py-6`}>
-        <Button variant="outline" className="mb-6" onClick={() => navigate(-1)}>
-          <ChevronLeft className="mr-2 h-4 w-4" />
-          {t.common?.back || 'Back'}
-        </Button>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-center py-8">
-              <p className="text-gray-400">{t.messages?.userNotFound || 'User not found'}</p>
-              <Button
-                variant="default"
-                className="mt-4"
-                onClick={() => navigate('/')}
-              >
-                {t.common?.goHome || 'Go Home'}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  useEffect(() => {
+    const container = chatContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const { scrollHeight, scrollTop, clientHeight } = container;
+      const isNotAtBottom = scrollHeight - scrollTop - clientHeight > 100;
+      setShowScrollButton(isNotAtBottom);
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const filteredMessages = messages.filter(msg => 
+    msg.content?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const formatMessageDate = (dateString: string) => {
+    try {
+      const messageDate = parseISO(dateString);
+      if (!isValid(messageDate)) {
+        return 'Unknown date';
+      }
+      
+      const today = new Date();
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+      
+      if (messageDate.toDateString() === today.toDateString()) {
+        return t.messages?.today || 'Today';
+      } else if (messageDate.toDateString() === yesterday.toDateString()) {
+        return t.messages?.yesterday || 'Yesterday';
+      } else {
+        return format(messageDate, 'EEEE, d MMMM', { locale: ru });
+      }
+    } catch (error) {
+      console.error('Error formatting date:', dateString, error);
+      return 'Unknown date';
+    }
+  };
+
+  const formatTime = (dateString: string) => {
+    try {
+      const date = parseISO(dateString);
+      if (!isValid(date)) {
+        return '--:--';
+      }
+      return format(date, 'HH:mm', { locale: ru });
+    } catch (error) {
+      console.error('Error formatting time:', dateString, error);
+      return '--:--';
+    }
+  };
 
   return (
-    <div className={`container ${isMobile ? 'px-4' : 'max-w-3xl'} mx-auto py-6`}>
-      <Button variant="outline" className="mb-6" onClick={() => navigate(-1)}>
-        <ChevronLeft className="mr-2 h-4 w-4" />
-        {t.common?.back || 'Back'}
-      </Button>
-      
-      <Card className="mb-4">
-        <CardHeader className="pb-3">
-          <div className="flex items-center">
-            <Avatar className="h-10 w-10 mr-3">
-              <AvatarImage src={recipient.avatar_url} alt={recipient.username} />
-              <AvatarFallback>{recipient.username[0]?.toUpperCase()}</AvatarFallback>
-            </Avatar>
-            <CardTitle>{recipient.username}</CardTitle>
+    <div className="flex flex-col h-[calc(100vh-4rem)]">
+      {recipient && (
+        <div className="p-3 border-b flex items-center gap-2 bg-card/50">
+          <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+            {recipient.avatar_url ? (
+              <img 
+                src={recipient.avatar_url} 
+                alt={recipient.username} 
+                className="w-10 h-10 rounded-full object-cover"
+              />
+            ) : (
+              <span className="text-lg font-medium">{recipient.username?.[0]}</span>
+            )}
           </div>
-        </CardHeader>
-      </Card>
-      
-      <div className="bg-gray-900 border border-gray-800 rounded-lg min-h-[400px] max-h-[500px] overflow-y-auto p-4 mb-4">
-        <div className="flex flex-col space-y-4">
-          {messages.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-gray-400">{t.messages?.noMessages || 'No messages yet'}</p>
-              <p className="text-sm text-gray-500 mt-2">
-                {t.messages?.startConversation || 'Send a message to start the conversation'}
-              </p>
+          <div>
+            <h2 className="font-medium">{recipient.username}</h2>
+            <p className="text-xs text-muted-foreground">
+              {recipient.status === 'online' ? 'Online' : 'Offline'}
+            </p>
+          </div>
+          
+          {showSearch ? (
+            <div className="ml-auto flex items-center gap-2">
+              <Input
+                ref={searchInputRef}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={t.messages?.searchPlaceholder || "Search messages..."}
+                className="w-48"
+                autoFocus
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  setShowSearch(false);
+                  setSearchQuery('');
+                }}
+              >
+                <X className="h-4 w-4" />
+              </Button>
             </div>
           ) : (
-            messages.map((message) => {
-              const isOwnMessage = message.sender_id === user.id;
-              
-              return (
-                <div 
-                  key={message.id} 
-                  className={`flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div className={`flex max-w-[80%] ${isOwnMessage ? 'flex-row-reverse' : ''}`}>
-                    {!isOwnMessage && (
-                      <Avatar className="h-8 w-8 mr-2">
-                        <AvatarImage src={message.sender?.avatar_url} alt={message.sender?.username} />
-                        <AvatarFallback>{message.sender?.username[0]?.toUpperCase()}</AvatarFallback>
-                      </Avatar>
-                    )}
-                    
-                    <div className={`
-                      rounded-lg px-4 py-2 ${isOwnMessage 
-                        ? 'bg-blue-600 text-white mr-2' 
-                        : 'bg-gray-800 text-gray-100'
-                      }
-                    `}>
-                      <p className="break-words">{message.content}</p>
-                      <p className="text-[10px] opacity-70 mt-1">
-                        {format(new Date(message.created_at), 'HH:mm, MMM d')}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
+            <Button
+              variant="ghost"
+              size="icon"
+              className="ml-auto"
+              onClick={() => setShowSearch(true)}
+            >
+              <Search className="h-4 w-4" />
+            </Button>
           )}
         </div>
+      )}
+
+      <div 
+        ref={chatContainerRef}
+        className="flex-1 overflow-y-auto p-4 space-y-6 bg-gradient-to-b from-background/50 to-background"
+      >
+        {messageGroups.map((group) => (
+          <div key={group.date} className="space-y-4">
+            <div className="relative flex items-center justify-center">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-muted"></div>
+              </div>
+              <div className="relative bg-background px-4 text-xs text-muted-foreground">
+                {formatMessageDate(group.date)}
+              </div>
+            </div>
+            
+            {group.messages.map((message) => (
+              <div key={message.id}>
+                {message.media_type === 'voice' ? (
+                  <AudioMessage 
+                    url={message.media_url || ''}
+                    timestamp={message.created_at}
+                    isOutgoing={message.sender_id === user?.id}
+                    sender={message.sender_id !== user?.id ? {
+                      avatar: recipient?.avatar_url,
+                      name: recipient?.username || 'User'
+                    } : undefined}
+                  />
+                ) : message.media_url ? (
+                  <MediaMessage 
+                    url={message.media_url}
+                    mediaType={message.media_type || 'file'}
+                    fileName={message.file_name}
+                    timestamp={message.created_at}
+                    isOutgoing={message.sender_id === user?.id}
+                    content={message.content}
+                    sender={message.sender_id !== user?.id ? {
+                      avatar: recipient?.avatar_url,
+                      name: recipient?.username || 'User'
+                    } : undefined}
+                  />
+                ) : (
+                  <div className={`flex mb-2 ${message.sender_id === user?.id ? 'justify-end' : 'justify-start'}`}>
+                    {message.sender_id !== user?.id && (
+                      <div className="h-8 w-8 rounded-full mr-2 bg-muted flex items-center justify-center overflow-hidden">
+                        {recipient?.avatar_url ? (
+                          <img 
+                            src={recipient.avatar_url} 
+                            alt={recipient.username} 
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <span>{recipient?.username?.[0]}</span>
+                        )}
+                      </div>
+                    )}
+                    <div className="flex flex-col max-w-[75%]">
+                      <div className={`rounded-xl p-3 ${
+                        message.sender_id === user?.id 
+                          ? 'bg-primary/10 text-primary-foreground ml-auto border border-primary/10' 
+                          : 'bg-muted border border-muted/50'
+                      }`}>
+                        <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
+                      </div>
+                      <span className={`text-xs text-muted-foreground mt-1 ${
+                        message.sender_id === user?.id ? 'ml-auto mr-1' : 'ml-1'
+                      }`}>
+                        {formatTime(message.created_at)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ))}
+        
+        {messageGroups.length === 0 && (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center text-muted-foreground">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-muted flex items-center justify-center">
+                <Send className="h-8 w-8 opacity-50" />
+              </div>
+              <h3 className="font-medium mb-1">{t.messages?.noMessages || 'No messages yet'}</h3>
+              <p className="text-sm">{t.messages?.startConversation || 'Start the conversation!'}</p>
+            </div>
+          </div>
+        )}
+        
+        <div ref={messagesEndRef} />
       </div>
-      
-      <div className="flex gap-2">
-        <Textarea
-          placeholder={t.messages?.typeSomething || 'Type a message...'}
-          value={messageContent}
-          onChange={(e) => setMessageContent(e.target.value)}
-          className="bg-gray-900 border-gray-800 resize-none"
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              sendMessage();
-            }
-          }}
-        />
-        <Button 
-          onClick={sendMessage}
-          disabled={!messageContent.trim() || isSending}
-          className="h-full"
+
+      {showScrollButton && (
+        <Button
+          variant="secondary"
+          size="icon"
+          className="fixed bottom-20 right-4 rounded-full shadow-lg z-10"
+          onClick={scrollToBottom}
         >
-          <Send className="h-4 w-4" />
+          <ArrowDown className="h-4 w-4" />
         </Button>
+      )}
+
+      <div className="border-t p-3 bg-card/50">
+        <div className="flex items-end gap-2">
+          <div className="relative flex-1 rounded-md border border-input bg-background overflow-hidden">
+            <Input
+              placeholder={t.messages?.placeholder || 'Type a message...'}
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 min-h-[40px] max-h-[120px] px-3 py-2"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  sendMessage();
+                }
+              }}
+            />
+            <div className="absolute bottom-0 right-0 p-2 flex items-center gap-1">
+              <MediaUploader onSend={sendMediaMessage} />
+            </div>
+          </div>
+          <VoiceMessageRecorder onSend={sendMediaMessage} />
+          <Button 
+            onClick={sendMessage} 
+            disabled={!content.trim()} 
+            size="icon"
+            className="rounded-full h-10 w-10 bg-primary"
+          >
+            <Send className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
     </div>
   );
-};
-
-export default Messages;
+}

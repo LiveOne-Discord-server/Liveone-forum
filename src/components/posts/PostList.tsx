@@ -4,13 +4,14 @@ import PostCard from './PostCard';
 import { Post, Tag, User } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
 import { Badge } from '@/components/ui/badge';
-import { X, AlertCircle } from 'lucide-react';
+import { X, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useLanguage } from '@/hooks/useLanguage';
 import PostFilter from './PostFilter';
+import { Button } from '@/components/ui/button';
 
 export const PostList = () => {
   const queryClient = useQueryClient();
@@ -20,6 +21,8 @@ export const PostList = () => {
   const { isAuthenticated, user } = useAuth();
   const isMobile = useIsMobile();
   const { t } = useLanguage();
+  const [currentPage, setCurrentPage] = useState(1);
+  const postsPerPage = 5;
 
   useEffect(() => {
     const fetchTags = async () => {
@@ -51,8 +54,9 @@ export const PostList = () => {
     fetchTags();
   }, []);
 
-  const fetchPosts = async () => {
-    console.log('Fetching posts, authenticated:', isAuthenticated, 'user:', user?.id);
+  const fetchPosts = async ({ queryKey }) => {
+    const [_, activeTag, searchTerm, isAuthenticated, userId, page] = queryKey;
+    console.log('Fetching posts, authenticated:', isAuthenticated, 'user:', userId, 'page:', page);
     
     try {
       const { data: postSettingsData, error: settingsError } = await supabase
@@ -66,7 +70,6 @@ export const PostList = () => {
       }
       
       const pinnedPostIds = postSettingsData.map(setting => setting.post_id);
-      console.log('Pinned post IDs:', pinnedPostIds);
 
       let query = supabase
         .from('posts')
@@ -75,11 +78,13 @@ export const PostList = () => {
           title,
           content,
           created_at,
+          last_edited_at,
           upvotes,
           downvotes,
           author_id
         `);
         
+      let filteredPostIds: string[] = [];
       if (activeTag) {
         console.log('Filtering by tag ID:', activeTag);
         const { data: taggedPostIds, error: tagError } = await supabase
@@ -93,12 +98,12 @@ export const PostList = () => {
         }
         
         if (taggedPostIds && taggedPostIds.length > 0) {
-          const postIds = taggedPostIds.map(item => item.post_id);
-          console.log('Found posts with tag:', postIds);
-          query = query.in('id', postIds);
+          filteredPostIds = taggedPostIds.map(item => item.post_id);
+          console.log('Found posts with tag:', filteredPostIds);
+          query = query.in('id', filteredPostIds);
         } else {
           console.log('No posts found with selected tag');
-          return [];
+          return { posts: [], totalCount: 0 };
         }
       }
       
@@ -107,8 +112,34 @@ export const PostList = () => {
         query = query.ilike('title', `%${searchTerm}%`);
       }
       
+      // Get total count for pagination using separate count query
+      const countQuery = supabase
+        .from('posts')
+        .select('id', { count: 'exact', head: true });
+        
+      // Apply the same filters to count query
+      if (activeTag && filteredPostIds.length > 0) {
+        countQuery.in('id', filteredPostIds);
+      }
+      
+      if (searchTerm) {
+        countQuery.ilike('title', `%${searchTerm}%`);
+      }
+      
+      const { count, error: countError } = await countQuery;
+      
+      if (countError) {
+        console.error('Error counting posts:', countError);
+        throw countError;
+      }
+      
+      // Implement pagination
+      const from = (page - 1) * postsPerPage;
+      const to = from + postsPerPage - 1;
+      
       const { data: postsData, error: postsError } = await query
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .range(from, to);
 
       if (postsError) {
         console.error('Error fetching posts:', postsError);
@@ -118,13 +149,13 @@ export const PostList = () => {
       console.log('Fetched posts:', postsData?.length);
       
       if (!postsData || postsData.length === 0) {
-        return [];
+        return { posts: [], totalCount: count };
       }
 
       const authorIds = [...new Set(postsData.map(post => post.author_id))];
       const { data: profilesData, error: profilesError } = await supabase
         .from('profiles')
-        .select('id, username, avatar_url')
+        .select('id, username, avatar_url, role')
         .in('id', authorIds);
 
       if (profilesError) {
@@ -139,7 +170,7 @@ export const PostList = () => {
 
       const { data: postTagsData, error: postTagsError } = await supabase
         .from('post_tags')
-        .select('post_id, tags(id, name)')
+        .select('post_id, tags(id, name, color)')
         .in('post_id', postsData.map(post => post.id));
         
       if (postTagsError) {
@@ -194,6 +225,7 @@ export const PostList = () => {
           authorId: post.author_id,
           author: author,
           createdAt: post.created_at,
+          lastEdited: post.last_edited_at,
           tags: postTagsMap[post.id] || [],
           upvotes: post.upvotes || 0,
           downvotes: post.downvotes || 0,
@@ -204,26 +236,31 @@ export const PostList = () => {
 
       console.log('Transformed posts:', transformedPosts.length);
 
-      return transformedPosts.sort((a, b) => {
+      // Sort results to show pinned posts first
+      transformedPosts.sort((a, b) => {
         if (a.isPinned && !b.isPinned) return -1;
         if (!a.isPinned && b.isPinned) return 1;
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
+
+      return { posts: transformedPosts, totalCount: count || 0 };
     } catch (error) {
       console.error('Error in fetchPosts:', error);
-      toast.error(t.posts.loadError || 'Не удалось загрузить посты');
-      return [];
+      toast.error(t.posts?.loadError || 'Failed to load posts');
+      return { posts: [], totalCount: 0 };
     }
   };
 
-  const { data: posts = [], isLoading, error } = useQuery({
-    queryKey: ['posts', activeTag, searchTerm, isAuthenticated, user?.id],
+  const { data = { posts: [], totalCount: 0 }, isLoading, error } = useQuery({
+    queryKey: ['posts', activeTag, searchTerm, isAuthenticated, user?.id, currentPage],
     queryFn: fetchPosts,
-    enabled: true,
     staleTime: 60000,
     retry: 3,
     retryDelay: 1000,
   });
+  
+  const { posts, totalCount } = data;
+  const totalPages = Math.ceil(totalCount / postsPerPage);
 
   useEffect(() => {
     const channel = supabase
@@ -232,7 +269,7 @@ export const PostList = () => {
         { event: '*', schema: 'public', table: 'posts' },
         (payload) => {
           console.log('Post change detected:', payload);
-          queryClient.invalidateQueries({ queryKey: ['posts', activeTag] });
+          queryClient.invalidateQueries({ queryKey: ['posts'] });
         }
       )
       .subscribe();
@@ -240,7 +277,21 @@ export const PostList = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [queryClient, activeTag]);
+  }, [queryClient]);
+
+  const goToNextPage = () => {
+    if (currentPage < totalPages) {
+      setCurrentPage(prev => prev + 1);
+      window.scrollTo(0, 0);
+    }
+  };
+
+  const goToPreviousPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage(prev => prev - 1);
+      window.scrollTo(0, 0);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -268,7 +319,7 @@ export const PostList = () => {
       <div className="rounded-lg border border-red-800 p-4 text-red-500 flex items-center">
         <AlertCircle className="h-5 w-5 mr-2" />
         <span>
-          {t.posts.loadError || 'Ошибка при загрузке постов. Пожалуйста, попробуйте позже.'}
+          {t.posts?.loadError || 'Error loading posts. Please try again later.'}
         </span>
       </div>
     );
@@ -279,15 +330,15 @@ export const PostList = () => {
       <div className="rounded-lg border border-gray-800 p-6 text-center">
         <p className="text-muted-foreground">
           {activeTag 
-            ? (t.posts.noPostsWithTag || "Нет постов с выбранным тегом.") 
-            : (t.posts.noPosts || "Пока нет постов. Будьте первым, кто создаст пост!")}
+            ? (t.posts?.noPostsWithTag || "No posts with the selected tag.") 
+            : (t.posts?.noPosts || "No posts yet. Be the first to create a post!")}
         </p>
         {activeTag && (
           <button 
             onClick={() => setActiveTag(null)}
-            className="mt-4 text-neon-orange hover:underline"
+            className="mt-4 text-orange-500 hover:underline"
           >
-            {t.posts.clearFilter || "Очистить фильтр"}
+            {t.posts?.clearFilter || "Clear filter"}
           </button>
         )}
       </div>
@@ -301,6 +352,7 @@ export const PostList = () => {
           onFilterChange={(newSearchTerm, newTagId) => {
             setSearchTerm(newSearchTerm);
             setActiveTag(newTagId);
+            setCurrentPage(1); // Reset to first page on filter change
             queryClient.invalidateQueries({ queryKey: ['posts'] });
           }} 
           initialSearchTerm={searchTerm}
@@ -313,7 +365,7 @@ export const PostList = () => {
           <div className="flex items-center justify-between">
             <div>
               <span className="text-sm text-muted-foreground">
-                {t.posts.filterApplied || 'Применены фильтры'}: 
+                {t.posts?.filterApplied || 'Filters applied'}: 
                 {searchTerm && <span className="ml-1 font-medium">"{searchTerm}"</span>}
               </span>
             </div>
@@ -321,11 +373,12 @@ export const PostList = () => {
               onClick={() => {
                 setSearchTerm('');
                 setActiveTag(null);
+                setCurrentPage(1);
                 queryClient.invalidateQueries({ queryKey: ['posts'] });
               }}
-              className="text-sm text-blue-400 hover:text-blue-300"
+              className="text-sm text-orange-400 hover:text-orange-300"
             >
-              {t.common.reset || 'Сбросить'}
+              {t.common?.reset || 'Reset'}
             </button>
           </div>
         </div>
@@ -342,6 +395,35 @@ export const PostList = () => {
           </div>
         ))}
       </div>
+      
+      {/* Pagination controls */}
+      {totalPages > 1 && (
+        <div className="flex justify-between items-center mt-8">
+          <Button 
+            variant="outline" 
+            onClick={goToPreviousPage}
+            disabled={currentPage === 1}
+            className="flex items-center"
+          >
+            <ChevronLeft className="mr-2 h-4 w-4" />
+            {t.common?.previous || 'Previous'}
+          </Button>
+          
+          <div className="text-sm">
+            {t.common?.page || 'Page'} {currentPage} {t.common?.of || 'of'} {totalPages}
+          </div>
+          
+          <Button 
+            variant="outline" 
+            onClick={goToNextPage}
+            disabled={currentPage >= totalPages}
+            className="flex items-center"
+          >
+            {t.common?.next || 'Next'}
+            <ChevronRight className="ml-2 h-4 w-4" />
+          </Button>
+        </div>
+      )}
     </div>
   );
 };

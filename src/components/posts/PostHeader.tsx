@@ -7,12 +7,14 @@ import { Author } from "@/components/comments/types";
 import PostActions from './PostActions';
 import FollowButton from '@/components/users/FollowButton';
 import { Post, User } from '@/types';
+import RoleBadge from '@/components/users/RoleBadge';
 
 interface PostHeaderProps {
   postId: string;
   title: string;
   author: Author;
   createdAt: string;
+  lastEditedAt?: string;
   isCompact?: boolean;
 }
 
@@ -21,6 +23,7 @@ const PostHeader: React.FC<PostHeaderProps> = ({
   title,
   author,
   createdAt,
+  lastEditedAt,
   isCompact = false
 }) => {
   // Create a post object for PostActions
@@ -34,13 +37,13 @@ const PostHeader: React.FC<PostHeaderProps> = ({
       username: author.username,
       avatar: author.avatar_url,
       provider: 'github',
-      // Ensure role is one of the allowed values or default to 'user'
       role: (author.role === 'admin' || author.role === 'moderator' || author.role === 'user') 
         ? author.role 
         : 'user',
-      status: author.status || 'online' // Use author status or default to 'online'
+      status: author.status || 'online'
     },
     createdAt: createdAt,
+    lastEdited: lastEditedAt,
     tags: [],
     upvotes: 0,
     downvotes: 0
@@ -54,8 +57,6 @@ const PostHeader: React.FC<PostHeaderProps> = ({
             {title}
           </Link>
         </div>
-        
-        {!isCompact && <PostActions post={postForActions} />}
       </div>
     );
   }
@@ -63,18 +64,27 @@ const PostHeader: React.FC<PostHeaderProps> = ({
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">{title}</h1>
-        <PostActions post={postForActions} />
+        <Link to={`/post/${postId}`} className="hover:underline">
+          <h1 className="text-2xl font-bold">{title}</h1>
+        </Link>
+        {/* Removed PostActions dropdown */}
       </div>
       
       <div className="flex justify-between items-center">
         <div className="flex items-center space-x-2">
           <Link to={`/user/${author.id}`} className="flex items-center gap-2 hover:opacity-80">
-            <Avatar className="h-6 w-6">
+            <Avatar className={`h-6 w-6 ${
+              author.role === 'admin' ? 'border-2 border-yellow-500' : 
+              author.role === 'moderator' ? 'border-2 border-purple-500' : 
+              ''
+            }`}>
               <AvatarImage src={author.avatar_url} alt={author.username} />
               <AvatarFallback>{author.username[0]}</AvatarFallback>
             </Avatar>
             <span className="text-sm font-medium">{author.username}</span>
+            {author.role && (author.role === 'admin' || author.role === 'moderator') && (
+              <RoleBadge role={author.role} className="h-5 text-[10px]" />
+            )}
           </Link>
           
           <span className="text-xs text-muted-foreground">
@@ -82,7 +92,7 @@ const PostHeader: React.FC<PostHeaderProps> = ({
           </span>
         </div>
         
-        <FollowButton userId={author.id} />
+        <FollowButton targetUserId={author.id} />
       </div>
     </div>
   );

@@ -52,21 +52,6 @@ interface PostEditorProps {
   hideBannerControls?: boolean;
 }
 
-// Creating a simplified TiptapImage extension
-const TiptapImage = Image.extend({
-  addAttributes() {
-    return {
-      ...this.parent?.(),
-      width: {
-        default: null,
-      },
-      height: {
-        default: null,
-      },
-    };
-  },
-});
-
 const PostEditor = ({ initialContent = '', initialTitle = '', initialTags = [], initialMediaUrls = [], onSave, onCancel, isSubmitting = false }: PostEditorProps) => {
   const [title, setTitle] = useState(initialTitle);
   const [open, setOpen] = useState(false);
@@ -104,6 +89,11 @@ const PostEditor = ({ initialContent = '', initialTitle = '', initialTags = [], 
       Image,
     ],
     content: initialContent,
+    editorProps: {
+      attributes: {
+        class: 'min-h-[150px] focus:outline-none',
+      },
+    },
   });
 
   useEffect(() => {
@@ -189,35 +179,44 @@ const PostEditor = ({ initialContent = '', initialTitle = '', initialTags = [], 
 
   // Markdown toolbar functions
   const toggleBold = () => {
-    editor?.chain().focus().toggleBold().run();
+    if (!editor) return;
+    editor.chain().focus().toggleBold().run();
   };
 
   const toggleItalic = () => {
-    editor?.chain().focus().toggleItalic().run();
+    if (!editor) return;
+    editor.chain().focus().toggleItalic().run();
   };
 
   const toggleH1 = () => {
-    editor?.chain().focus().toggleHeading({ level: 1 }).run();
+    if (!editor) return;
+    editor.chain().focus().toggleHeading({ level: 1 }).run();
   };
 
   const toggleH2 = () => {
-    editor?.chain().focus().toggleHeading({ level: 2 }).run();
+    if (!editor) return;
+    editor.chain().focus().toggleHeading({ level: 2 }).run();
   };
 
   const toggleH3 = () => {
-    editor?.chain().focus().toggleHeading({ level: 3 }).run();
+    if (!editor) return;
+    editor.chain().focus().toggleHeading({ level: 3 }).run();
   };
 
   const toggleBulletList = () => {
-    editor?.chain().focus().toggleBulletList().run();
+    if (!editor) return;
+    editor.chain().focus().toggleBulletList().run();
   };
 
   const toggleOrderedList = () => {
-    editor?.chain().focus().toggleOrderedList().run();
+    if (!editor) return;
+    editor.chain().focus().toggleOrderedList().run();
   };
 
   const setLink = () => {
-    const previousUrl = editor?.getAttributes('link').href;
+    if (!editor) return;
+    
+    const previousUrl = editor.getAttributes('link').href;
     const url = window.prompt('URL', previousUrl);
 
     // cancelled
@@ -227,12 +226,12 @@ const PostEditor = ({ initialContent = '', initialTitle = '', initialTags = [], 
 
     // empty
     if (url === '') {
-      editor?.chain().focus().extendMarkRange('link').unsetLink().run();
+      editor.chain().focus().extendMarkRange('link').unsetLink().run();
       return;
     }
 
     // set link
-    editor?.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+    editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
   };
 
   return (
@@ -251,7 +250,7 @@ const PostEditor = ({ initialContent = '', initialTitle = '', initialTags = [], 
       
       <div className="mt-4">
         <Label>{t.posts?.content || 'Content'}</Label>
-        <div className="bg-gray-900 border-gray-800 rounded-md mb-2">
+        <div className="bg-gray-900 border border-gray-800 rounded-md mb-2">
           <div className="flex flex-wrap gap-1 p-1 border-b border-gray-800">
             <Button 
               type="button" 
@@ -344,28 +343,6 @@ const PostEditor = ({ initialContent = '', initialTitle = '', initialTags = [], 
         </div>
       )}
       
-      {existingMedia.length > 0 && (
-        <div className="mt-4">
-          <Label>{t.posts?.existingMedia || 'Existing Media'}</Label>
-          <div className="flex flex-wrap gap-2">
-            {existingMedia.map(url => (
-              <div key={url} className="relative">
-                <img src={url} alt={t.posts?.mediaFile || 'Media File'} className="max-w-[100px] max-h-[100px] rounded-md object-cover" />
-                <Button 
-                  type="button"
-                  variant="destructive"
-                  size="icon"
-                  className="absolute top-0 right-0 h-5 w-5 rounded-full p-0"
-                  onClick={() => handleMediaRemove(url)}
-                >
-                  <X className="h-3 w-3" />
-                </Button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      
       {mediaFiles.length > 0 && (
         <div className="mt-4">
           <Label>{t.posts?.newMedia || 'New Media'}</Label>
@@ -391,6 +368,28 @@ const PostEditor = ({ initialContent = '', initialTitle = '', initialTags = [], 
                   size="icon"
                   className="absolute top-0 right-0 h-5 w-5 rounded-full p-0"
                   onClick={() => handleMediaFileRemove(index)}
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {existingMedia.length > 0 && (
+        <div className="mt-4">
+          <Label>{t.posts?.existingMedia || 'Existing Media'}</Label>
+          <div className="flex flex-wrap gap-2">
+            {existingMedia.map(url => (
+              <div key={url} className="relative">
+                <img src={url} alt={t.posts?.mediaFile || 'Media File'} className="max-w-[100px] max-h-[100px] rounded-md object-cover" />
+                <Button 
+                  type="button"
+                  variant="destructive"
+                  size="icon"
+                  className="absolute top-0 right-0 h-5 w-5 rounded-full p-0"
+                  onClick={() => handleMediaRemove(url)}
                 >
                   <X className="h-3 w-3" />
                 </Button>

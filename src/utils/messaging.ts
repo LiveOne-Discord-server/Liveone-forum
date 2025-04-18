@@ -1,6 +1,13 @@
 
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/utils/supabase';
 import { toast } from '@/hooks/use-toast';
+
+// Format duration in seconds to MM:SS format
+export const formatDuration = (seconds: number): string => {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+};
 
 // Message data structure
 export interface Message {
@@ -108,7 +115,7 @@ export const sendMessage = async (senderId: string, recipientId: string, content
 // Mark messages as read
 export const markMessagesAsRead = async (messageIds: string[]) => {
   try {
-    if (!messageIds.length) return true;
+    if (!messageIds || messageIds.length === 0) return true;
     
     console.log('Marking messages as read:', messageIds);
     

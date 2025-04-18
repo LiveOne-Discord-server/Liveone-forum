@@ -1,0 +1,13 @@
+
+{
+  "blogs": [
+    {
+      "id": "9.4.25",
+      "title": "9.4.25 Update",
+      "path": "/blogs/4.9.25.md",
+      "date": "2025-04-09",
+      "summary": "Major Enhancements",
+      "tags": ["update", "fix"]
+    }
+  ]
+}

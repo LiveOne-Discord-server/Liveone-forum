@@ -1,89 +1,91 @@
-import { useEffect, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { formatDate } from '@/lib/utils';
-import { Post, User } from '@/types';
-import { Crown, ChevronLeft } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { supabase } from '@/utils/supabase';
+import { Post, User, Tag } from '@/types';
+import PostHeader from '@/components/posts/PostHeader';
+import PostContent from '@/components/posts/PostContent';
 import CommentList from '@/components/comments/CommentList';
-import PostActions from '@/components/posts/PostActions';
-import { toast } from '@/hooks/use-toast';
-import ReactMarkdown from 'react-markdown';
+import { Card, CardContent, CardFooter } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+import VoteButtons from '@/components/posts/VoteButtons';
 import PostMedia from '@/components/posts/PostMedia';
 import TagBadge from '@/components/posts/TagBadge';
+import { toast } from '@/hooks/use-toast';
+import { isUserAdmin } from '@/utils/admin';
+import { useAuth } from '@/hooks/useAuth';
+import PostActions from '@/components/posts/PostActions';
+import PinnedBadge from '@/components/posts/PinnedBadge';
+import { Button } from '@/components/ui/button';
+import { ArrowLeft } from 'lucide-react';
+import PostReactions from '@/components/posts/PostReactions';
+import { Author } from '@/components/comments/types';
 
 const PostView = () => {
   const { postId } = useParams<{ postId: string }>();
-  const navigate = useNavigate();
   const [post, setPost] = useState<Post | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [commentsEnabled, setCommentsEnabled] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
+  const [isAdmin, setIsAdmin] = useState(false);
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  
   useEffect(() => {
     const fetchPost = async () => {
-      setIsLoading(true);
+      if (!postId) {
+        setLoading(false);
+        return;
+      }
+      
+      setLoading(true);
+      
       try {
-        await new Promise(resolve => setTimeout(resolve, 300));
-        
         const { data: postData, error: postError } = await supabase
-        .from('posts')
-        .select('id, title, content, created_at, upvotes, downvotes, author_id')
-        .eq('id', postId)
-        .single();
-        
+          .from('posts')
+          .select('id, title, content, created_at, last_edited_at, author_id, upvotes, downvotes')
+          .eq('id', postId)
+          .single();
+          
         if (postError) {
-          console.error('Error fetching post:', postError);
-          setError(postError.message);
-          setIsLoading(false);
-          return;
+          throw postError;
         }
         
         if (!postData) {
-          setError('Post not found');
-          setIsLoading(false);
+          toast.error('This post may have been deleted or does not exist.');
+          navigate('/');
           return;
         }
         
         const { data: authorData, error: authorError } = await supabase
           .from('profiles')
-          .select('id, username, avatar_url, role')
+          .select('id, username, avatar_url, role, status')
           .eq('id', postData.author_id)
           .single();
           
-        if (authorError) throw authorError;
+        if (authorError) {
+          console.error('Error fetching author data:', authorError);
+        }
         
         const { data: tagsData, error: tagsError } = await supabase
           .from('post_tags')
-          .select('tags(id, name, color)')
+          .select('tags:tag_id(id, name, color)')
           .eq('post_id', postId);
           
         if (tagsError) {
-          console.error('Error fetching tags:', tagsError);
-          // Continue without tags
+          console.error('Error fetching post tags:', tagsError);
         }
         
-        let formattedTags = [];
-        if (tagsData && !tagsError) {
-          const tags = tagsData.map(tagData => tagData.tags).filter(Boolean);
-          formattedTags = tags.map(tag => ({
-            id: tag?.id || '',
-            name: tag?.name || '',
-            color: tag?.color || '#3b82f6'
-          }));
-        }
+        const tags = tagsData 
+          ? tagsData.map(item => item.tags as Tag).filter(Boolean)
+          : [];
         
         const { data: mediaData, error: mediaError } = await supabase
           .from('post_media')
-          .select('url')
+          .select('url, media_type')
           .eq('post_id', postId);
           
-        if (mediaError) throw mediaError;
-        
-        const mediaUrls = mediaData.map(media => media.url);
+        if (mediaError) {
+          console.error('Error fetching media:', mediaError);
+        }
         
         const { data: settingsData, error: settingsError } = await supabase
           .from('post_settings')
@@ -91,144 +93,202 @@ const PostView = () => {
           .eq('post_id', postId)
           .single();
           
-        if (settingsError && settingsError.code !== 'PGRST116') throw settingsError;
+        if (settingsError && settingsError.code !== 'PGRST116') {
+          console.error('Error fetching post settings:', settingsError);
+        }
         
-        setCommentsEnabled(settingsData?.comments_enabled ?? true);
+        let userVote = null;
+        if (user) {
+          const { data: voteData, error: voteError } = await supabase
+            .from('votes')
+            .select('vote_type')
+            .eq('post_id', postId)
+            .eq('user_id', user.id)
+            .single();
+            
+          if (!voteError && voteData) {
+            userVote = voteData.vote_type;
+          }
+        }
         
-        const author: User = {
-          id: authorData.id,
-          username: authorData.username,
-          avatar: authorData.avatar_url,
-          provider: 'github',
-          role: authorData.role || 'user',
-          status: 'online'
-        };
+        const comments_enabled = settingsData ? settingsData.comments_enabled : true;
+        setCommentsEnabled(comments_enabled);
         
-        const fullPost: Post = {
+        const authorRole = authorData?.role || 'user';
+        const safeRole = ['admin', 'moderator', 'user'].includes(authorRole) ? authorRole as 'admin' | 'moderator' | 'user' : 'user';
+        
+        const formattedPost: Post = {
           id: postData.id,
           title: postData.title,
           content: postData.content,
           authorId: postData.author_id,
-          author: author,
           createdAt: postData.created_at,
-          tags: formattedTags,
+          lastEdited: postData.last_edited_at,
           upvotes: postData.upvotes || 0,
           downvotes: postData.downvotes || 0,
-          mediaUrls: mediaUrls,
-          isPinned: settingsData?.is_pinned || false
+          userVote,
+          tags,
+          mediaUrls: mediaData ? mediaData.map(m => m.url) : [],
+          isPinned: settingsData ? settingsData.is_pinned : false,
+          author: {
+            id: authorData?.id || postData.author_id,
+            username: authorData?.username || 'Unknown User',
+            avatar: authorData?.avatar_url || null,
+            role: safeRole,
+            status: authorData?.status as 'online' | 'offline' | 'dnd' | 'idle' || 'offline',
+            provider: 'github'
+          }
         };
         
-        setPost(fullPost);
+        setPost(formattedPost);
       } catch (error) {
         console.error('Error fetching post:', error);
-        toast.error('Failed to load post');
-        navigate('/');
+        toast.error('There was an error loading this post.');
       } finally {
-        setIsLoading(false);
+        setLoading(false);
       }
     };
     
     fetchPost();
-  }, [postId, navigate]);
+  }, [postId]);
   
-  const renderMedia = (url: string) => {
-    if (!url) return null;
-    return <PostMedia url={url} />;
-  };
-  
-  if (isLoading) {
+  useEffect(() => {
+    const checkAdmin = async () => {
+      if (user) {
+        const adminStatus = await isUserAdmin(user.id);
+        setIsAdmin(adminStatus);
+      } else {
+        setIsAdmin(false);
+      }
+    };
+    
+    checkAdmin();
+  }, [user]);
+
+  if (loading) {
     return (
-      <div className="container max-w-4xl mx-auto py-10">
-        <div className="animate-pulse space-y-6">
-          <div className="h-10 bg-gray-800 rounded w-3/4"></div>
-          <div className="flex items-center space-x-4">
-            <div className="rounded-full bg-gray-800 h-12 w-12"></div>
-            <div className="h-4 bg-gray-800 rounded w-1/4"></div>
-          </div>
-          <div className="space-y-3">
-            <div className="h-4 bg-gray-800 rounded w-full"></div>
-            <div className="h-4 bg-gray-800 rounded w-full"></div>
-            <div className="h-4 bg-gray-800 rounded w-3/4"></div>
-          </div>
-          <div className="h-64 bg-gray-800 rounded"></div>
-        </div>
+      <div className="container max-w-4xl mx-auto py-6 px-4">
+        <Button variant="ghost" className="mb-4" onClick={() => navigate(-1)}>
+          <ArrowLeft className="mr-2 h-4 w-4" /> Back
+        </Button>
+        
+        <Card>
+          <CardContent className="pt-6">
+            <Skeleton className="h-8 w-3/4 mb-4" />
+            <div className="flex items-center gap-2 mb-6">
+              <Skeleton className="h-8 w-8 rounded-full" />
+              <Skeleton className="h-4 w-32" />
+            </div>
+            <Skeleton className="h-4 w-full mb-2" />
+            <Skeleton className="h-4 w-full mb-2" />
+            <Skeleton className="h-4 w-3/4 mb-6" />
+            <Skeleton className="h-64 w-full rounded-lg mb-6" />
+          </CardContent>
+          <CardFooter>
+            <Skeleton className="h-8 w-24" />
+          </CardFooter>
+        </Card>
       </div>
     );
   }
   
   if (!post) {
     return (
-      <div className="container max-w-4xl mx-auto py-10">
-        <div className="text-center">
-          <h2 className="text-xl font-semibold mb-4">{error || "Post not found"}</h2>
-          <Button onClick={() => navigate('/')}>
-            <ChevronLeft className="mr-2 h-4 w-4" />
-            Back to Home
-          </Button>
-        </div>
+      <div className="container max-w-4xl mx-auto py-6 px-4">
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-center">Post not found or has been deleted.</p>
+          </CardContent>
+        </Card>
       </div>
     );
   }
   
+  const postAuthor: Author = {
+    id: post.author.id,
+    username: post.author.username,
+    avatar_url: post.author.avatar || '',
+    role: post.author.role,
+    status: post.author.status || 'offline'
+  };
+  
   return (
-    <div className="container max-w-4xl mx-auto py-10">
-      <Link to="/">
-        <Button variant="outline" className="mb-6">
-          <ChevronLeft className="mr-2 h-4 w-4" />
-          Back to Posts
-        </Button>
-      </Link>
+    <div className="container max-w-4xl mx-auto py-6 px-4">
+      <Button variant="ghost" className="mb-4" onClick={() => navigate(-1)}>
+        <ArrowLeft className="mr-2 h-4 w-4" /> Back
+      </Button>
       
       <Card>
-        <CardHeader className="flex flex-row items-start justify-between space-y-0">
-          <div>
-            <h1 className="text-3xl font-bold mb-4">{post.title}</h1>
-            <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2">
-                <Avatar>
-                  <AvatarImage src={post.author.avatar} alt={post.author.username} />
-                  <AvatarFallback>{post.author.username?.charAt(0) || 'U'}</AvatarFallback>
-                </Avatar>
-                <div className="flex items-center">
-                  <span className="font-medium">{post.author.username}</span>
-                  {post.author.role === 'admin' && (
-                    <Crown className="h-4 w-4 ml-1 text-amber-500" />
-                  )}
-                </div>
-              </div>
-              <span className="text-muted-foreground">
-                {formatDate(post.createdAt)}
-              </span>
-            </div>
-          </div>
-          
-          <PostActions post={post} />
-        </CardHeader>
-        
         <CardContent className="pt-6">
-          <div className="prose prose-gray dark:prose-invert max-w-none text-left">
-            <div className="whitespace-pre-line text-lg text-left">
-              <ReactMarkdown>{post.content}</ReactMarkdown>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              {post.isPinned && <PinnedBadge />}
             </div>
-            
-            {post.mediaUrls?.map((url, index) => (
-              <div key={index} className="my-6">
-                {renderMedia(url)}
-              </div>
-            ))}
-            
-            {post.tags.length > 0 && (
-              <div className="flex flex-wrap gap-2 mt-8">
-                {post.tags.map((tag) => (
-                  <TagBadge key={tag.id} tag={tag} />
-                ))}
-              </div>
+            {(isAdmin || post.authorId === user?.id) && (
+              <PostActions 
+                post={post}
+                onSettingsChanged={(settings) => {
+                  setCommentsEnabled(settings.commentsEnabled);
+                  setPost(prev => prev ? {
+                    ...prev,
+                    isPinned: settings.isPinned
+                  } : null);
+                }}
+              />
             )}
           </div>
           
-          {postId && <CommentList postId={postId} commentsEnabled={commentsEnabled} />}
+          <PostHeader 
+            postId={post.id}
+            title={post.title}
+            author={postAuthor}
+            createdAt={post.createdAt}
+            lastEditedAt={post.lastEdited}
+          />
+          
+          {post.mediaUrls && post.mediaUrls.length > 0 && (
+            <div className="my-4">
+              <PostMedia urls={post.mediaUrls} />
+            </div>
+          )}
+          
+          <div className="my-6">
+            <PostContent 
+              content={post.content}
+              createdAt={post.createdAt}
+              lastEdited={post.lastEdited}
+              tags={post.tags}
+            />
+          </div>
+          
+          {post.tags && post.tags.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-4">
+              {post.tags.map(tag => (
+                <TagBadge 
+                  key={tag.id} 
+                  tag={tag}
+                />
+              ))}
+            </div>
+          )}
+
+          <PostReactions postId={post.id} />
         </CardContent>
+        
+        <CardFooter className="border-t border-gray-800 pt-4">
+          <VoteButtons 
+            postId={post.id}
+            initialUpvotes={post.upvotes}
+            initialDownvotes={post.downvotes}
+            userVote={post.userVote}
+          />
+        </CardFooter>
       </Card>
+      
+      <CommentList 
+        postId={post.id}
+        commentsEnabled={commentsEnabled}
+      />
     </div>
   );
 };

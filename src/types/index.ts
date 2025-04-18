@@ -12,6 +12,8 @@ export interface User {
   following?: number;
   banner_color?: string;
   banner_url?: string;
+  email?: string;
+  created_at?: string; // Adding this property to fix the TypeScript error
 }
 
 export interface Post {
@@ -21,6 +23,7 @@ export interface Post {
   authorId: string;
   author: User;
   createdAt: string;
+  lastEdited?: string;
   tags: Tag[];
   upvotes: number;
   downvotes: number;
@@ -63,6 +66,7 @@ export interface PostEditorProps {
   initialMediaUrls?: string[];
   onSave: (content: string, title: string, tags: Tag[], mediaFiles: File[], existingMedia?: string[]) => Promise<void>;
   isSubmitting?: boolean;
+  onCancel?: () => void;
 }
 
 export interface Message {

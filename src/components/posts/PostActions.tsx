@@ -1,8 +1,8 @@
 
 import { useState, useEffect } from "react";
-import { MoreHorizontal, Trash2, Edit, Lock, LockOpen, Pin, PinOff, UserCircle } from "lucide-react";
+import { MoreHorizontal, Trash2, Edit, Lock, LockOpen, Pin, PinOff } from "lucide-react";
 import { Post } from "@/types";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/utils/supabase";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
@@ -15,58 +15,80 @@ import {
   DropdownMenuSeparator
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { isUserAdmin } from "@/utils/admin";
+import { isUserAdmin, isUserModerator } from "@/utils/admin";
 
 interface PostActionsProps {
-  post: Post;
+  post?: Post;
+  postId?: string;
+  currentCommentsEnabled?: boolean;
+  currentIsPinned?: boolean;
+  onSettingsChanged?: (settings: { commentsEnabled: boolean, isPinned: boolean }) => void;
 }
 
-export const PostActions = ({ post }: PostActionsProps) => {
-  const { user } = useAuth();
+const PostActions = ({ 
+  post, 
+  postId,
+  currentCommentsEnabled,
+  currentIsPinned,
+  onSettingsChanged 
+}: PostActionsProps) => {
+  const { user, appUser } = useAuth();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isModerator, setIsModerator] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [commentsEnabled, setCommentsEnabled] = useState(true);
-  const [isPinned, setIsPinned] = useState(false);
-  const isAuthor = user?.id === post.authorId;
+  const [commentsEnabled, setCommentsEnabled] = useState(
+    currentCommentsEnabled !== undefined ? currentCommentsEnabled : true
+  );
+  const [isPinned, setIsPinned] = useState(
+    currentIsPinned !== undefined ? currentIsPinned : false
+  );
+  
+  const id = post?.id || postId;
+  const isAuthor = user?.id === post?.authorId;
 
-  // Load post settings and check admin status when component mounts
   useEffect(() => {
     const loadSettings = async () => {
-      // Check if user is admin
-      if (user) {
-        const adminStatus = await isUserAdmin(user.id);
-        setIsAdmin(adminStatus);
+      if (!user || !id) return;
+      
+      if (appUser) {
+        setIsAdmin(appUser.role === 'admin');
+        setIsModerator(appUser.role === 'moderator');
+      } else {
+        const adminCheck = await isUserAdmin(user.id);
+        setIsAdmin(adminCheck);
+        
+        const modCheck = await isUserModerator(user.id);
+        setIsModerator(modCheck);
       }
       
-      // Get post settings
-      const { data } = await supabase
-        .from('post_settings')
-        .select('*')
-        .eq('post_id', post.id)
-        .single();
-        
-      if (data) {
-        setCommentsEnabled(data.comments_enabled);
-        setIsPinned(data.is_pinned);
-      } else {
-        // Create default settings if they don't exist
-        await supabase
+      if (currentCommentsEnabled === undefined || currentIsPinned === undefined) {
+        const { data } = await supabase
           .from('post_settings')
-          .insert({
-            post_id: post.id,
-            comments_enabled: true,
-            is_pinned: false
-          });
+          .select('*')
+          .eq('post_id', id)
+          .single();
+          
+        if (data) {
+          setCommentsEnabled(data.comments_enabled);
+          setIsPinned(data.is_pinned);
+        } else {
+          await supabase
+            .from('post_settings')
+            .insert({
+              post_id: id,
+              comments_enabled: true,
+              is_pinned: false
+            });
+        }
       }
     };
     
     loadSettings();
-  }, [post.id, user]);
+  }, [id, user, appUser, currentCommentsEnabled, currentIsPinned]);
 
-  // Show dropdown menu if the user is the author or an admin
-  if (!user || (!isAuthor && !isAdmin)) return null;
+  if (!user || !id || (!isAuthor && !isAdmin && !isModerator)) return null;
 
   const handleDeletePost = async () => {
     if (!window.confirm("Are you sure you want to delete this post?")) {
@@ -79,7 +101,7 @@ export const PostActions = ({ post }: PostActionsProps) => {
       const { error } = await supabase
         .from('posts')
         .delete()
-        .eq('id', post.id);
+        .eq('id', id);
         
       if (error) throw error;
       
@@ -95,7 +117,7 @@ export const PostActions = ({ post }: PostActionsProps) => {
   };
   
   const handleEditPost = () => {
-    navigate(`/edit-post/${post.id}`);
+    navigate(`/edit-post/${id}`);
   };
   
   const toggleComments = async () => {
@@ -107,12 +129,19 @@ export const PostActions = ({ post }: PostActionsProps) => {
       const { error } = await supabase
         .from('post_settings')
         .update({ comments_enabled: newState })
-        .eq('post_id', post.id);
+        .eq('post_id', id);
         
       if (error) throw error;
       
       setCommentsEnabled(newState);
       toast.success(`Comments ${newState ? 'enabled' : 'disabled'}`);
+      
+      if (onSettingsChanged) {
+        onSettingsChanged({
+          commentsEnabled: newState,
+          isPinned: isPinned
+        });
+      }
     } catch (error) {
       console.error("Error toggling comments:", error);
       toast.error("Failed to update comment settings");
@@ -131,23 +160,26 @@ export const PostActions = ({ post }: PostActionsProps) => {
       const { error } = await supabase
         .from('post_settings')
         .update({ is_pinned: newState })
-        .eq('post_id', post.id);
+        .eq('post_id', id);
         
       if (error) throw error;
       
       setIsPinned(newState);
       toast.success(`Post ${newState ? 'pinned' : 'unpinned'}`);
       queryClient.invalidateQueries({ queryKey: ['posts'] });
+      
+      if (onSettingsChanged) {
+        onSettingsChanged({
+          commentsEnabled: commentsEnabled,
+          isPinned: newState
+        });
+      }
     } catch (error) {
       console.error("Error toggling pin status:", error);
       toast.error("Failed to update pin status");
     } finally {
       setIsLoading(false);
     }
-  };
-  
-  const handleViewMyPosts = () => {
-    navigate('/my-posts');
   };
 
   return (
@@ -188,8 +220,8 @@ export const PostActions = ({ post }: PostActionsProps) => {
           </>
         )}
         
-        {isAdmin && !isAuthor && (
-          <>
+        {(isAdmin || isModerator) && !isAuthor && (
+          <>            
             <DropdownMenuItem onClick={toggleComments}>
               {commentsEnabled ? (
                 <>
@@ -204,51 +236,27 @@ export const PostActions = ({ post }: PostActionsProps) => {
               )}
             </DropdownMenuItem>
             
-            <DropdownMenuItem onClick={togglePin}>
-              {isPinned ? (
-                <>
-                  <PinOff className="mr-2 h-4 w-4" />
-                  Unpin Post
-                </>
-              ) : (
-                <>
-                  <Pin className="mr-2 h-4 w-4" />
-                  Pin Post
-                </>
-              )}
-            </DropdownMenuItem>
+            {isAdmin && (
+              <DropdownMenuItem onClick={togglePin}>
+                {isPinned ? (
+                  <>
+                    <PinOff className="mr-2 h-4 w-4" />
+                    Unpin Post
+                  </>
+                ) : (
+                  <>
+                    <Pin className="mr-2 h-4 w-4" />
+                    Pin Post
+                  </>
+                )}
+              </DropdownMenuItem>
+            )}
             
             <DropdownMenuSeparator />
             
             <DropdownMenuItem onClick={handleDeletePost} className="text-red-500">
               <Trash2 className="mr-2 h-4 w-4" />
               Delete Post
-            </DropdownMenuItem>
-          </>
-        )}
-        
-        {isAdmin && isAuthor && (
-          <DropdownMenuItem onClick={togglePin}>
-            {isPinned ? (
-              <>
-                <PinOff className="mr-2 h-4 w-4" />
-                Unpin Post
-              </>
-            ) : (
-              <>
-                <Pin className="mr-2 h-4 w-4" />
-                Pin Post
-              </>
-            )}
-          </DropdownMenuItem>
-        )}
-        
-        {user && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={handleViewMyPosts}>
-              <UserCircle className="mr-2 h-4 w-4" />
-              View My Posts
             </DropdownMenuItem>
           </>
         )}

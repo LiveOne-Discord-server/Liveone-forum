@@ -22,7 +22,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, username, avatar_url, role, banner_color, banner_url')
+        .select('id, username, avatar_url, role, banner_color, banner_url, status')
         .eq('id', userId)
         .single();
 
@@ -112,7 +112,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       
       const { data: existingProfile, error: fetchError } = await supabase
         .from('profiles')
-        .select('id, username, avatar_url, role, banner_color, banner_url')
+        .select('id, username, avatar_url, role, banner_color, banner_url, status')
         .eq('id', user.id)
         .single();
       
@@ -134,16 +134,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (updates.avatar !== undefined) supabaseUpdates.avatar_url = updates.avatar;
       if (updates.banner_color !== undefined) supabaseUpdates.banner_color = updates.banner_color;
       if (updates.banner_url !== undefined) supabaseUpdates.banner_url = updates.banner_url;
+      if (updates.status !== undefined) supabaseUpdates.status = updates.status;
       
       if (Object.keys(supabaseUpdates).length === 0) {
-        if (updates.status !== undefined) {
-          setUser(prev => prev ? { ...prev, status: updates.status } : null);
-          setAppUser(prev => {
-            if (!prev) return null;
-            return { ...prev, status: updates.status };
-          });
-          return true;
-        }
         return true;
       }
       
@@ -159,9 +152,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       
       console.log('Profile updated successfully in database');
       
-      if (updates.status) {
-        setUser(prev => prev ? { ...prev, status: updates.status } : null);
-      }
+      setUser(prev => {
+        if (!prev) return null;
+        return { ...prev, status: updates.status || prev.status };
+      });
       
       setAppUser(prev => {
         if (!prev) return null;

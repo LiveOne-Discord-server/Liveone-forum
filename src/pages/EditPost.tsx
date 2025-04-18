@@ -23,6 +23,7 @@ const EditPost = () => {
     authorId: string;
     tags: Tag[];
     mediaUrls: string[];
+    lastEdited?: string;
   } | null>(null);
   const { t } = useLanguage();
 
@@ -31,18 +32,40 @@ const EditPost = () => {
       if (!postId || !user) return;
 
       try {
+        // First, check if the last_edited_at column exists
         const { data: postData, error: postError } = await supabase
           .from('posts')
           .select('title, content, author_id')
           .eq('id', postId)
           .single();
 
-        if (postError) throw postError;
+        if (postError) {
+          console.error("Error fetching post:", postError);
+          toast.error(t.posts?.notFound || "Post not found");
+          navigate('/');
+          return;
+        }
 
         if (postData.author_id !== user.id) {
           toast.error(t.posts?.notAuthorized || "You're not authorized to edit this post");
           navigate('/');
           return;
+        }
+
+        // Get last edited time separately to handle if column doesn't exist yet
+        let lastEditedAt = null;
+        try {
+          const { data: editData } = await supabase
+            .from('posts')
+            .select('last_edited_at')
+            .eq('id', postId)
+            .single();
+            
+          if (editData) {
+            lastEditedAt = editData.last_edited_at;
+          }
+        } catch (editError) {
+          console.log('Last edited timestamp not available:', editError);
         }
 
         // Get tags for this post
@@ -81,6 +104,7 @@ const EditPost = () => {
           authorId: postData.author_id,
           tags: postTags,
           mediaUrls,
+          lastEdited: lastEditedAt,
         });
 
       } catch (error) {
@@ -112,7 +136,11 @@ const EditPost = () => {
       // 1. Update the post
       const { error: postError } = await supabase
         .from('posts')
-        .update({ title, content })
+        .update({ 
+          title, 
+          content, 
+          last_edited_at: new Date().toISOString() 
+        })
         .eq('id', postId);
 
       if (postError) throw postError;

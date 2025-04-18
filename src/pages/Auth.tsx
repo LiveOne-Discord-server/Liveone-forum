@@ -12,18 +12,14 @@ import { toast } from '@/hooks/use-toast';
 import { useLanguage } from '@/hooks/useLanguage';
 import { Eye, EyeOff, Github, Mail, MessageSquare } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import HCaptcha from '@/components/auth/HCaptcha';
 
 const Auth = () => {
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [username, setUsername] = useState('');
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const { t } = useLanguage();
 
   useEffect(() => {
@@ -38,26 +34,13 @@ const Auth = () => {
     setErrorMessage('');
 
     if (mode === 'signup') {
-      if (!username.trim()) {
-        setErrorMessage(t.auth?.usernameRequired || 'Username is required');
-        setLoading(false);
-        return;
-      }
-
       try {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            data: {
-              username: username.trim(),
-            },
-          }
+        const { error } = await supabase.auth.signInWithOtp({
+          email
         });
 
         if (error) throw error;
 
-        // Show success message but keep the user on the same page
         toast.success(t.auth?.verifyEmail || 'Please check your email to verify your account');
         setMode('signin');
       } catch (error: any) {
@@ -66,17 +49,16 @@ const Auth = () => {
       }
     } else {
       try {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
+        const { error } = await supabase.auth.signInWithOtp({
+          email
         });
 
         if (error) throw error;
 
-        navigate('/');
+        toast.success(t.auth?.checkEmail || 'Please check your email for the login link');
       } catch (error: any) {
         console.error('Sign in error:', error);
-        setErrorMessage(error.message || t.auth?.signinError || 'Invalid email or password');
+        setErrorMessage(error.message || t.auth?.signinError || 'Invalid email');
       }
     }
 
@@ -131,10 +113,6 @@ const Auth = () => {
     }
   };
 
-  const togglePasswordVisibility = () => {
-    setShowPassword(!showPassword);
-  };
-
   return (
     <div className="container max-w-md mx-auto py-10">
       <Card>
@@ -142,7 +120,7 @@ const Auth = () => {
           <CardTitle>{mode === 'signin' ? (t.auth?.signIn || 'Sign In') : (t.auth?.signUp || 'Sign Up')}</CardTitle>
           <CardDescription>
             {mode === 'signin' 
-              ? (t.auth?.signInDescription || 'Enter your credentials to access your account') 
+              ? (t.auth?.signInDescription || 'Enter your email to receive a login link') 
               : (t.auth?.signUpDescription || 'Create an account to get started')}
           </CardDescription>
         </CardHeader>
@@ -161,19 +139,6 @@ const Auth = () => {
                   </Alert>
                 )}
                 
-                {mode === 'signup' && (
-                  <div className="space-y-2">
-                    <Label htmlFor="username">{t.auth?.username || 'Username'}</Label>
-                    <Input
-                      id="username"
-                      placeholder={t.auth?.usernamePlaceholder || 'Enter your username'}
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      disabled={loading}
-                    />
-                  </div>
-                )}
-                
                 <div className="space-y-2">
                   <Label htmlFor="email">{t.auth?.email || 'Email'}</Label>
                   <Input
@@ -184,29 +149,6 @@ const Auth = () => {
                     onChange={(e) => setEmail(e.target.value)}
                     disabled={loading}
                   />
-                </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="password">{t.auth?.password || 'Password'}</Label>
-                  <div className="relative">
-                    <Input
-                      id="password"
-                      type={showPassword ? 'text' : 'password'}
-                      placeholder={t.auth?.passwordPlaceholder || 'Enter your password'}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      disabled={loading}
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="absolute right-0 top-0 h-full px-3"
-                      onClick={togglePasswordVisibility}
-                    >
-                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </Button>
-                  </div>
                 </div>
                 
                 <Button type="submit" className="w-full" disabled={loading}>

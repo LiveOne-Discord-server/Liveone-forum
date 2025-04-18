@@ -1,122 +1,354 @@
 
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from './supabase';
+import { toast } from '@/hooks/use-toast';
 
-// Check if the current user is an admin
-export const isUserAdmin = async (userId: string | undefined): Promise<boolean> => {
-  if (!userId) return false;
-  
-  // Special case for our specific admin account
-  const { data: profile, error: profileError } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', userId)
-    .single();
+/**
+ * Check if a user has admin privileges
+ */
+export const isUserAdmin = async (userId: string): Promise<boolean> => {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', userId)
+      .single();
+      
+    if (error) throw error;
     
-  if (profileError || !profile) return false;
-  
-  // Check if this is our special admin email
-  if (profile.email === 'baneronetwo@memeware.net') {
-    // If it's our special admin, update their role to admin if not already
-    if (profile.role !== 'admin') {
-      await supabase
-        .from('profiles')
-        .update({ role: 'admin' })
-        .eq('id', userId);
-    }
-    return true;
+    return data?.role === 'admin';
+  } catch (error) {
+    console.error('Error checking if user is admin:', error);
+    return false;
   }
-  
-  return profile.role === 'admin';
 };
 
-// Function to get user posts
+/**
+ * Check if a user has moderator privileges
+ */
+export const isUserModerator = async (userId: string): Promise<boolean> => {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', userId)
+      .single();
+      
+    if (error) throw error;
+    
+    return data?.role === 'moderator';
+  } catch (error) {
+    console.error('Error checking if user is moderator:', error);
+    return false;
+  }
+};
+
+/**
+ * Check if a user has admin or moderator privileges
+ */
+export const isUserAdminOrMod = async (userId: string): Promise<boolean> => {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', userId)
+      .single();
+      
+    if (error) throw error;
+    
+    return data?.role === 'admin' || data?.role === 'moderator';
+  } catch (error) {
+    console.error('Error checking user role:', error);
+    return false;
+  }
+};
+
+/**
+ * Get user's posts
+ */
 export const getUserPosts = async (userId: string) => {
-  if (!userId) return [];
-  
-  const { data, error } = await supabase
-    .from('posts')
-    .select(`
-      id,
-      title,
-      content,
-      created_at,
-      upvotes,
-      downvotes,
-      author_id
-    `)
-    .eq('author_id', userId)
-    .order('created_at', { ascending: false });
+  try {
+    // First, let's get all posts by this user
+    const { data: postData, error: postError } = await supabase
+      .from('posts')
+      .select('*')
+      .eq('author_id', userId)
+      .order('created_at', { ascending: false });
     
-  if (error || !data) return [];
-  
-  // Get the author profile
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('id, username, avatar_url, role')
-    .eq('id', userId)
-    .single();
+    if (postError) throw postError;
+    if (!postData) return [];
+
+    // Then, get the author details separately
+    const { data: authorData, error: authorError } = await supabase
+      .from('profiles')
+      .select('id, username, avatar_url, role, status')
+      .eq('id', userId)
+      .single();
     
-  // Get post tags
-  const { data: postTagsData } = await supabase
-    .from('post_tags')
-    .select('post_id, tags(id, name)')
-    .in('post_id', data.map(post => post.id));
-    
-  // Create a lookup for post tags
-  const postTagsMap = {};
-  postTagsData?.forEach(postTag => {
-    if (!postTagsMap[postTag.post_id]) {
-      postTagsMap[postTag.post_id] = [];
+    if (authorError) {
+      console.error('Error fetching author data:', authorError);
     }
-    if (postTag.tags) {
-      postTagsMap[postTag.post_id].push(postTag.tags);
-    }
-  });
-  
-  // Get post media
-  const { data: mediaData } = await supabase
-    .from('post_media')
-    .select('post_id, url')
-    .in('post_id', data.map(post => post.id));
+
+    // Define valid status values to ensure type safety
+    const validStatus = ['online', 'offline', 'dnd', 'idle'] as const;
     
-  // Create a lookup for post media
-  const mediaMap = {};
-  mediaData?.forEach(media => {
-    if (!mediaMap[media.post_id]) {
-      mediaMap[media.post_id] = [];
-    }
-    mediaMap[media.post_id].push(media.url);
-  });
-  
-  // Get post settings for pinned status
-  const { data: settingsData } = await supabase
-    .from('post_settings')
-    .select('post_id, is_pinned')
-    .in('post_id', data.map(post => post.id));
+    // Helper function to validate status
+    const validateStatus = (status: string | null | undefined): 'online' | 'offline' | 'dnd' | 'idle' => {
+      if (!status || !validStatus.includes(status as any)) {
+        return 'offline';
+      }
+      return status as 'online' | 'offline' | 'dnd' | 'idle';
+    };
+
+    // Helper function to validate role
+    const validateRole = (role: string | null | undefined): 'user' | 'admin' | 'moderator' => {
+      if (role === 'admin') return 'admin';
+      if (role === 'moderator') return 'moderator';
+      return 'user'; // Default to 'user' for any other value
+    };
+
+    // Transform the data to match the expected Post type
+    const posts = postData.map(post => ({
+      id: post.id,
+      title: post.title,
+      content: post.content,
+      authorId: post.author_id,
+      author: {
+        id: authorData?.id || userId,
+        username: authorData?.username || 'Unknown',
+        avatar: authorData?.avatar_url,
+        role: validateRole(authorData?.role),
+        provider: 'unknown', // Default value as we don't have this info
+        status: validateStatus(authorData?.status)
+      },
+      createdAt: post.created_at,
+      lastEdited: post.last_edited_at,
+      tags: [], // Will be populated later
+      upvotes: post.upvotes || 0,
+      downvotes: post.downvotes || 0,
+      isPinned: false, // Default value, will be updated if settings exist
+      userVote: null,
+      mediaUrls: [] // Initialize empty array for media URLs
+    }));
     
-  const pinnedMap = {};
-  settingsData?.forEach(setting => {
-    pinnedMap[setting.post_id] = setting.is_pinned;
-  });
-  
-  return data.map(post => ({
-    id: post.id,
-    title: post.title,
-    content: post.content,
-    authorId: post.author_id,
-    author: {
-      id: userId,
-      username: profile?.username || 'Unknown User',
-      avatar: profile?.avatar_url,
-      provider: 'github' as 'github' | 'discord' | 'email',
-      role: profile?.role || 'user',
-      status: 'online'
-    },
-    createdAt: post.created_at,
-    tags: postTagsMap[post.id] || [],
-    upvotes: post.upvotes || 0,
-    downvotes: post.downvotes || 0,
-    mediaUrls: mediaMap[post.id] || [],
-    isPinned: pinnedMap[post.id] || false
-  }));
+    // Get post settings for each post
+    for (const post of posts) {
+      const { data: settingsData } = await supabase
+        .from('post_settings')
+        .select('*')
+        .eq('post_id', post.id)
+        .single();
+        
+      if (settingsData) {
+        post.isPinned = settingsData.is_pinned;
+      }
+    }
+    
+    // Get tags for each post
+    for (const post of posts) {
+      const { data: tagData, error: tagError } = await supabase
+        .from('post_tags')
+        .select('tags(*)')
+        .eq('post_id', post.id);
+        
+      if (!tagError && tagData) {
+        post.tags = tagData.map(item => item.tags);
+      }
+    }
+
+    // Get media for each post
+    for (const post of posts) {
+      const { data: mediaData, error: mediaError } = await supabase
+        .from('post_media')
+        .select('url')
+        .eq('post_id', post.id);
+        
+      if (!mediaError && mediaData) {
+        post.mediaUrls = mediaData.map(item => item.url);
+      }
+    }
+    
+    return posts;
+  } catch (error) {
+    console.error('Error getting user posts:', error);
+    return [];
+  }
+};
+
+/**
+ * Ban a user
+ */
+export const banUser = async (
+  adminId: string, 
+  userToBanId: string, 
+  reason: string
+): Promise<{ success: boolean; message: string }> => {
+  try {
+    // First check if requester is admin or mod
+    const isAdminOrMod = await isUserAdminOrMod(adminId);
+    
+    if (!isAdminOrMod) {
+      return { 
+        success: false, 
+        message: 'You do not have permission to ban users' 
+      };
+    }
+    
+    // Then check if user to ban exists
+    const { data: userToBan, error: userCheckError } = await supabase
+      .from('profiles')
+      .select('username, role')
+      .eq('id', userToBanId)
+      .single();
+      
+    if (userCheckError) {
+      return { 
+        success: false, 
+        message: 'User not found' 
+      };
+    }
+    
+    // Cannot ban admins or moderators
+    if (userToBan.role === 'admin' || userToBan.role === 'moderator') {
+      return { 
+        success: false, 
+        message: 'Cannot ban administrators or moderators' 
+      };
+    }
+    
+    // Call the ban_user function (this will need to be created on the Supabase end)
+    const { data, error } = await supabase.functions.invoke('ban_user', {
+      body: {
+        admin_id: adminId,
+        user_id: userToBanId,
+        reason
+      }
+    });
+    
+    if (error) {
+      console.error('Error banning user:', error);
+      return { 
+        success: false, 
+        message: error.message || 'Error banning user' 
+      };
+    }
+    
+    return { 
+      success: true, 
+      message: `User ${userToBan.username} has been banned` 
+    };
+  } catch (error) {
+    console.error('Error in banUser function:', error);
+    return { 
+      success: false, 
+      message: 'An unexpected error occurred' 
+    };
+  }
+};
+
+/**
+ * Unban a user
+ */
+export const unbanUser = async (
+  adminId: string, 
+  userToUnbanId: string
+): Promise<{ success: boolean; message: string }> => {
+  try {
+    // First check if requester is admin or mod
+    const isAdminOrMod = await isUserAdminOrMod(adminId);
+    
+    if (!isAdminOrMod) {
+      return { 
+        success: false, 
+        message: 'You do not have permission to unban users' 
+      };
+    }
+    
+    // Call the unban_user function
+    const { data, error } = await supabase.functions.invoke('unban_user', {
+      body: {
+        admin_id: adminId,
+        user_id: userToUnbanId
+      }
+    });
+    
+    if (error) {
+      console.error('Error unbanning user:', error);
+      return { 
+        success: false, 
+        message: error.message || 'Error unbanning user' 
+      };
+    }
+    
+    return { 
+      success: true, 
+      message: 'User has been unbanned' 
+    };
+  } catch (error) {
+    console.error('Error in unbanUser function:', error);
+    return { 
+      success: false, 
+      message: 'An unexpected error occurred' 
+    };
+  }
+};
+
+/**
+ * Check if a user is banned
+ */
+export const isUserBanned = async (userId: string): Promise<boolean> => {
+  try {
+    // Using the ban_user edge function to check if user is banned
+    const { data, error } = await supabase.functions.invoke('check_ban_status', {
+      body: { user_id: userId }
+    });
+      
+    if (error) {
+      throw error;
+    }
+    
+    return data?.is_banned || false;
+  } catch (error) {
+    console.error('Error checking if user is banned:', error);
+    return false;
+  }
+};
+
+/**
+ * Get ban info for a user
+ */
+export const getUserBanInfo = async (userId: string) => {
+  try {
+    // Using the get_ban_info edge function to retrieve ban information
+    const { data, error } = await supabase.functions.invoke('get_ban_info', {
+      body: { user_id: userId }
+    });
+      
+    if (error) {
+      throw error;
+    }
+    
+    return data?.ban_info || null;
+  } catch (error) {
+    console.error('Error getting user ban info:', error);
+    return null;
+  }
+};
+
+/**
+ * Get banned users
+ */
+export const getBannedUsers = async () => {
+  try {
+    // Using the get_banned_users edge function to list all banned users
+    const { data, error } = await supabase.functions.invoke('get_banned_users');
+      
+    if (error) {
+      throw error;
+    }
+    
+    return data?.banned_users || [];
+  } catch (error) {
+    console.error('Error getting banned users:', error);
+    return [];
+  }
 };

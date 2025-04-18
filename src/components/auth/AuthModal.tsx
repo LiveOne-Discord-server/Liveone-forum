@@ -1,5 +1,5 @@
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -51,6 +51,7 @@ const AuthModal = ({ open, onOpenChange }: AuthModalProps) => {
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
+    
     if (!email || !password) {
       toast.error("Please fill in all fields");
       return;
@@ -59,7 +60,6 @@ const AuthModal = ({ open, onOpenChange }: AuthModalProps) => {
     setIsProcessing(true);
     try {
       if (isSignUp) {
-        // Sign up new user
         const { error } = await supabase.auth.signUp({
           email,
           password,
@@ -67,8 +67,8 @@ const AuthModal = ({ open, onOpenChange }: AuthModalProps) => {
 
         if (error) throw error;
         toast.success("Account created! Check your email for verification link.");
+        onOpenChange(false);
       } else {
-        // Sign in existing user
         const { error } = await supabase.auth.signInWithPassword({
           email,
           password,
@@ -76,8 +76,8 @@ const AuthModal = ({ open, onOpenChange }: AuthModalProps) => {
 
         if (error) throw error;
         toast.success("Signed in successfully!");
+        onOpenChange(false);
       }
-      onOpenChange(false);
     } catch (error: any) {
       console.error("Auth error:", error);
       toast.error(error.message || "Authentication failed");
@@ -139,7 +139,9 @@ const AuthModal = ({ open, onOpenChange }: AuthModalProps) => {
                 
                 <div className="text-center text-sm">
                   <button 
-                    onClick={() => setIsSignUp(!isSignUp)} 
+                    onClick={() => {
+                      setIsSignUp(!isSignUp);
+                    }} 
                     className="text-neon-orange hover:underline"
                   >
                     {isSignUp 

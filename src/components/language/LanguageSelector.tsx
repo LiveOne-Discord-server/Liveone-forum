@@ -6,13 +6,14 @@ import { Languages } from 'lucide-react';
 import { Language } from '@/hooks/useLanguage';
 
 const LanguageSelector = () => {
-  const { language, setLanguage } = useLanguage();
+  const { language, setLanguage, t } = useLanguage();
 
   const languages = {
     en: { name: 'English', flag: '🇬🇧' },
     ru: { name: 'Русский', flag: '🇷🇺' },
     uk: { name: 'Українська', flag: '🇺🇦' },
-    de: { name: 'Deutsch', flag: '🇩🇪' }
+    de: { name: 'Deutsch', flag: '🇩🇪' },
+    be: { name: 'Беларуская', flag: '🇧🇾' }
   };
 
   const handleLanguageChange = (lang: Language) => {
@@ -22,9 +23,9 @@ const LanguageSelector = () => {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="rounded-full h-8 w-8">
+        <Button variant="ghost" size="icon" className="rounded-full h-8 w-8" aria-label={t.common?.language || 'Language'}>
           <Languages className="h-5 w-5" />
-          <span className="sr-only">Выбор языка</span>
+          <span className="sr-only">{t.common?.languageSelection || 'Language Selection'}</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="bg-gray-900 border-gray-800">

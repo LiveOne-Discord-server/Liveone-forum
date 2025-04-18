@@ -1,29 +1,13 @@
 
-import { Outlet } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import React from 'react';
 import Header from './Header';
-import Footer from './Footer';
+import { Footer } from './Footer';
 
-const Layout = () => {
-  const [isLoaded, setIsLoaded] = useState(false);
-
-  useEffect(() => {
-    // Add a small delay for smoother animation
-    const timer = setTimeout(() => {
-      setIsLoaded(true);
-    }, 300);
-    
-    return () => clearTimeout(timer);
-  }, []);
-
+const Layout = ({ children }: { children: React.ReactNode }) => {
   return (
-    <div className="min-h-screen flex flex-col bg-background text-foreground">
+    <div className="flex flex-col min-h-screen">
       <Header />
-      <main className={`flex-grow container mx-auto px-4 py-6 transition-opacity duration-500 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}>
-        <div className="animate-fadeIn">
-          <Outlet />
-        </div>
-      </main>
+      <main className="flex-1 py-6">{children}</main>
       <Footer />
     </div>
   );

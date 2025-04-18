@@ -1,133 +1,152 @@
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/hooks/useAuth';
-import { uploadAvatar, uploadAvatarFromUrl, ensureAvatarBucket } from '@/utils/avatarStorage';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { toast } from '@/hooks/use-toast';
 import { useLanguage } from '@/hooks/useLanguage';
-import { Upload, Loader2, Link, Image, Camera } from 'lucide-react';
+import { Upload, Loader2, Link as LinkIcon, Camera } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { supabase } from '@/utils/supabase';
+import { uploadAvatarImage } from '@/utils/avatarStorage';
 
 interface AvatarUploaderProps {
-  currentAvatarUrl?: string;
+  currentAvatarUrl?: string | null;
   username?: string;
-  onAvatarChange?: (url: string) => void;
+  onAvatarChange?: (url: string | null) => void;
 }
 
 const AvatarUploader = ({ currentAvatarUrl, username, onAvatarChange }: AvatarUploaderProps) => {
-  const { user, updateUserProfile } = useAuth();
+  const { appUser } = useAuth();
   const [isUploading, setIsUploading] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState(currentAvatarUrl || '');
   const [imageUrl, setImageUrl] = useState('');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const { t } = useLanguage();
+  const dropzoneRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Ensure the avatar bucket exists when the component mounts
-    const initBucket = async () => {
-      await ensureAvatarBucket();
-    };
-    
-    initBucket();
-  }, []);
-
-  useEffect(() => {
+    // Update avatar URL if the currentAvatarUrl prop changes
     if (currentAvatarUrl) {
       setAvatarUrl(currentAvatarUrl);
     }
   }, [currentAvatarUrl]);
 
-  // Общая функция для обновления аватара
-  const updateAvatar = async (newAvatarUrl: string) => {
-    try {
-      // Обновляем URL аватара в контексте авторизации
-      console.log('Updating profile with new avatar URL:', newAvatarUrl);
-      const success = await updateUserProfile({ avatar: newAvatarUrl });
-      
-      if (!success) {
-        throw new Error(t.profile?.avatarUpdateFailed || 'Failed to update avatar');
-      }
-      
-      console.log('Profile updated with new avatar');
-      
-      // Обновляем локальное состояние
-      setAvatarUrl(newAvatarUrl);
-      if (onAvatarChange) {
-        onAvatarChange(newAvatarUrl);
-      }
-      
-      toast.success(t.profile?.avatarUpdated || 'Avatar updated successfully');
-      return true;
-    } catch (error) {
-      console.error('Error updating avatar:', error);
-      toast.error(
-        error instanceof Error 
-          ? error.message 
-          : t.profile?.avatarUpdateFailed || 'Failed to update avatar'
-      );
-      return false;
-    } finally {
-      setPreviewUrl(null);
-    }
-  };
+  useEffect(() => {
+    const handleDragEnter = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(true);
+    };
 
-  // Handle file preview before upload
-  const handleFilePreview = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (!event.target.files || !event.target.files[0]) return;
-    
-    const file = event.target.files[0];
-    const reader = new FileReader();
-    
-    reader.onload = (e) => {
-      if (e.target && typeof e.target.result === 'string') {
-        setPreviewUrl(e.target.result);
+    const handleDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(false);
+    };
+
+    const handleDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const handleDrop = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(false);
+      
+      if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+        const file = e.dataTransfer.files[0];
+        if (file.type.startsWith('image/')) {
+          handleAvatarUpload(file);
+        } else {
+          toast.error("Please upload an image file.");
+        }
       }
     };
-    
-    reader.readAsDataURL(file);
+
+    const dropzone = dropzoneRef.current;
+    if (dropzone) {
+      dropzone.addEventListener('dragenter', handleDragEnter);
+      dropzone.addEventListener('dragleave', handleDragLeave);
+      dropzone.addEventListener('dragover', handleDragOver);
+      dropzone.addEventListener('drop', handleDrop);
+    }
+
+    return () => {
+      if (dropzone) {
+        dropzone.removeEventListener('dragenter', handleDragEnter);
+        dropzone.removeEventListener('dragleave', handleDragLeave);
+        dropzone.removeEventListener('dragover', handleDragOver);
+        dropzone.removeEventListener('drop', handleDrop);
+      }
+    };
+  }, []);
+
+  // Handle file upload from computer
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!event.target.files || !event.target.files[0]) return;
+    const file = event.target.files[0];
+    handleAvatarUpload(file);
   };
 
-  // Обработчик загрузки файла с компьютера
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (!event.target.files || !event.target.files[0]) return;
-    
-    const file = event.target.files[0];
+  const handleAvatarUpload = async (file: File) => {
     setIsUploading(true);
     
     try {
-      // Проверяем, что пользователь авторизован
-      if (!user || !user.id) {
-        throw new Error(t.profile?.authRequired || 'You need to be logged in to update your avatar');
+      // Check if user is authenticated
+      if (!appUser || !appUser.id) {
+        throw new Error('You need to be logged in to update your avatar');
       }
       
-      console.log('Uploading avatar for user:', user.id);
+      // Upload the avatar using our utility function
+      const newAvatarUrl = await uploadAvatarImage(file, appUser.id, (progress) => {
+        console.log(`Upload progress: ${progress}%`);
+      });
       
-      // Загружаем аватар в хранилище
-      const newAvatarUrl = await uploadAvatar(file, user.id);
+      // Update state and callback
+      setAvatarUrl(newAvatarUrl);
+      setPreviewUrl(null);
       
-      if (!newAvatarUrl) {
-        throw new Error(t.profile?.avatarUploadFailed || 'Failed to upload avatar. Please try again.');
+      // Auto-save the profile with the new avatar
+      try {
+        const { error } = await supabase
+          .from('profiles')
+          .update({ avatar_url: newAvatarUrl })
+          .eq('id', appUser.id);
+          
+        if (error) throw error;
+        
+        console.log('Avatar updated and saved to profile');
+        
+        if (onAvatarChange) {
+          onAvatarChange(newAvatarUrl);
+        }
+        
+        toast.success('Avatar updated successfully');
+      } catch (saveError) {
+        console.error('Error saving avatar to profile:', saveError);
+        toast.error('Avatar uploaded but profile not updated. Please try saving your profile.');
+        
+        if (onAvatarChange) {
+          onAvatarChange(newAvatarUrl);
+        }
       }
-      
-      console.log('Avatar uploaded successfully:', newAvatarUrl);
-      
-      // Обновляем профиль с новым URL
-      await updateAvatar(newAvatarUrl);
     } catch (error) {
       console.error('Error uploading avatar:', error);
       toast.error(
         error instanceof Error 
           ? error.message 
-          : t.profile?.avatarUpdateFailed || 'Failed to update avatar'
+          : 'Failed to update avatar'
       );
     } finally {
       setIsUploading(false);
     }
   };
   
-  // Обработчик загрузки аватара по URL
+  // Handle URL upload with auto-save
   const handleUrlUpload = async () => {
     if (!imageUrl.trim()) {
       toast.error('Please enter an image URL');
@@ -137,150 +156,172 @@ const AvatarUploader = ({ currentAvatarUrl, username, onAvatarChange }: AvatarUp
     setIsUploading(true);
     
     try {
-      // Проверяем, что пользователь авторизован
-      if (!user || !user.id) {
-        throw new Error(t.profile?.authRequired || 'You need to be logged in to update your avatar');
+      // Check if user is authenticated
+      if (!appUser || !appUser.id) {
+        throw new Error('You need to be logged in to update your avatar');
       }
       
-      console.log('Uploading avatar from URL for user:', user.id);
-      
-      // Show preview first
-      setPreviewUrl(imageUrl);
-      
-      // Загружаем аватар по URL
-      const newAvatarUrl = await uploadAvatarFromUrl(imageUrl, user.id);
-      
-      if (!newAvatarUrl) {
-        throw new Error(t.profile?.avatarUploadFailed || 'Failed to upload avatar. Please try again.');
+      // Fetch the image from URL
+      const response = await fetch(imageUrl);
+      if (!response.ok) {
+        throw new Error('Failed to fetch image from URL');
       }
       
-      console.log('Avatar uploaded successfully from URL:', newAvatarUrl);
+      const blob = await response.blob();
+      const fileExt = imageUrl.split('.').pop()?.split('?')[0] || 'jpg';
+      const fileName = `avatar-${Date.now()}.${fileExt}`;
+      const file = new File([blob], fileName, { type: blob.type });
       
-      // Обновляем профиль с новым URL
-      await updateAvatar(newAvatarUrl);
+      // Use the same upload function we use for direct file uploads
+      const newAvatarUrl = await uploadAvatarImage(file, appUser.id);
       
-      // Очищаем поле ввода URL
-      setImageUrl('');
+      // Auto-save the profile with the new avatar
+      try {
+        const { error } = await supabase
+          .from('profiles')
+          .update({ avatar_url: newAvatarUrl })
+          .eq('id', appUser.id);
+          
+        if (error) throw error;
+        
+        console.log('Avatar updated and saved to profile');
+        
+        // Update state and callback
+        setAvatarUrl(newAvatarUrl);
+        setImageUrl('');
+        
+        if (onAvatarChange) {
+          onAvatarChange(newAvatarUrl);
+        }
+        
+        toast.success('Avatar updated successfully');
+      } catch (saveError) {
+        console.error('Error saving avatar to profile:', saveError);
+        toast.error('Avatar uploaded but profile not updated. Please try saving your profile.');
+        
+        // Update state and callback
+        setAvatarUrl(newAvatarUrl);
+        setImageUrl('');
+        
+        if (onAvatarChange) {
+          onAvatarChange(newAvatarUrl);
+        }
+      }
     } catch (error) {
       console.error('Error uploading avatar from URL:', error);
       toast.error(
         error instanceof Error 
           ? error.message 
-          : t.profile?.avatarUpdateFailed || 'Failed to upload avatar'
+          : 'Failed to update avatar'
       );
     } finally {
       setIsUploading(false);
     }
   };
 
+  // Preview URL before upload
+  const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setImageUrl(e.target.value);
+    setPreviewUrl(e.target.value.trim() ? e.target.value : null);
+  };
+
   return (
-    <div className="flex flex-col items-center space-y-6 animate-fadeIn">
-      <div className="relative group">
-        <Avatar className="h-24 w-24 ring-2 ring-orange-500/50 ring-offset-2 ring-offset-background transition-all duration-300 hover:ring-orange-500">
-          {previewUrl ? (
-            <AvatarImage src={previewUrl} alt={username || 'Preview'} className="object-cover" />
+    <div className="flex flex-col items-center space-y-6">
+      <div 
+        ref={dropzoneRef}
+        className={`relative cursor-pointer transition-all ${
+          isDragging 
+            ? 'scale-110 ring-4 ring-primary ring-offset-2 ring-offset-background' 
+            : ''
+        }`}
+        onClick={() => document.getElementById('avatar-upload')?.click()}
+      >
+        <Avatar className="h-24 w-24 border-2 border-primary/30">
+          {(previewUrl || avatarUrl) ? (
+            <AvatarImage src={previewUrl || avatarUrl} alt={username || 'User'} className="object-cover" />
           ) : (
-            <AvatarImage src={avatarUrl} alt={username || 'User'} className="object-cover" />
+            <AvatarFallback className="text-xl bg-primary/10">
+              {username?.charAt(0).toUpperCase() || 'U'}
+            </AvatarFallback>
           )}
-          <AvatarFallback className="text-xl bg-gradient-to-br from-orange-400 to-red-500 text-white">
-            {username?.charAt(0).toUpperCase() || 'U'}
-          </AvatarFallback>
         </Avatar>
+        
+        {!isUploading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-full opacity-0 hover:opacity-100 transition-opacity">
+            <Camera className="h-8 w-8 text-white" />
+          </div>
+        )}
         
         {isUploading && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-full">
             <Loader2 className="h-8 w-8 animate-spin text-white" />
           </div>
         )}
-        
-        <div className="absolute -bottom-1 -right-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <label htmlFor="avatar-quick-upload" className="cursor-pointer">
-            <div className="h-8 w-8 rounded-full bg-orange-500 flex items-center justify-center shadow-md hover:bg-orange-600 transition-colors">
-              <Camera className="h-4 w-4 text-white" />
-            </div>
-            <input
-              id="avatar-quick-upload"
-              type="file"
-              accept="image/*"
-              onChange={(e) => {
-                handleFilePreview(e);
-                handleFileChange(e);
-              }}
-              className="hidden"
-              disabled={isUploading}
-            />
-          </label>
-        </div>
       </div>
 
       <div className="w-full max-w-xs">
         <Tabs defaultValue="file" className="w-full">
           <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="file" className="transition-all duration-300 data-[state=active]:bg-orange-500">
-              <Upload className="mr-2 h-4 w-4" />
-              From Computer
+            <TabsTrigger value="file">
+              <Camera className="mr-2 h-4 w-4" />
+              From Device
             </TabsTrigger>
-            <TabsTrigger value="url" className="transition-all duration-300 data-[state=active]:bg-orange-500">
-              <Link className="mr-2 h-4 w-4" />
+            <TabsTrigger value="url">
+              <LinkIcon className="mr-2 h-4 w-4" />
               From URL
             </TabsTrigger>
           </TabsList>
           
-          <TabsContent value="file" className="mt-4 animate-fadeIn">
+          <TabsContent value="file" className="mt-4">
             <div className="flex flex-col space-y-4">
               <div className="flex items-center justify-center">
                 <label htmlFor="avatar-upload" className="cursor-pointer w-full">
-                  <div className="flex items-center justify-center">
-                    <Button 
-                      type="button" 
-                      variant="default" 
-                      size="sm"
-                      disabled={isUploading}
-                      className="cursor-pointer w-full bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 transition-all duration-300 hover:scale-[1.02]"
-                    >
-                      <Upload className="mr-2 h-4 w-4" />
-                      Upload from Computer
-                    </Button>
-                  </div>
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    className="w-full cursor-pointer flex items-center justify-center"
+                    disabled={isUploading}
+                  >
+                    <Upload className="mr-2 h-4 w-4" />
+                    Choose Image
+                  </Button>
                   <input
                     id="avatar-upload"
                     type="file"
                     accept="image/*"
-                    onChange={(e) => {
-                      handleFilePreview(e);
-                      handleFileChange(e);
-                    }}
+                    onChange={handleFileUpload}
                     className="hidden"
                     disabled={isUploading}
                   />
                 </label>
               </div>
-              <p className="text-xs text-center text-muted-foreground">Click the button to select an image from your computer</p>
+              <p className="text-xs text-center text-muted-foreground">
+                Select an image from your device (JPG, PNG) or drag and drop an image onto the avatar
+              </p>
             </div>
           </TabsContent>
           
-          <TabsContent value="url" className="mt-4 animate-fadeIn">
+          <TabsContent value="url" className="mt-4">
             <div className="flex flex-col space-y-4">
               <div className="flex items-center space-x-2">
                 <Input
                   type="url"
                   placeholder="Enter image URL"
                   value={imageUrl}
-                  onChange={(e) => setImageUrl(e.target.value)}
+                  onChange={handleUrlChange}
                   disabled={isUploading}
                   className="flex-1"
                 />
               </div>
               <Button 
                 type="button" 
-                variant="default" 
-                size="sm"
+                variant="outline" 
                 disabled={isUploading || !imageUrl.trim()}
                 onClick={handleUrlUpload}
-                className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 transition-all duration-300 hover:scale-[1.02]"
+                className="w-full"
               >
-                <Image className="mr-2 h-4 w-4" />
-                Apply
+                <LinkIcon className="mr-2 h-4 w-4" />
+                Use URL
               </Button>
             </div>
           </TabsContent>

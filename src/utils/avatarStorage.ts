@@ -1,12 +1,30 @@
 
-import { supabase } from '@/integrations/supabase/client';
-import { ensureBucketExists } from './storage';
+import { supabase } from '@/utils/supabase';
+import { toast } from '@/hooks/use-toast';
 
 /**
  * Ensures that the avatars bucket exists before uploading
  */
 export const ensureAvatarBucket = async () => {
-  return await ensureBucketExists('avatars', true);
+  try {
+    // Check if bucket exists
+    const { data: buckets } = await supabase.storage.listBuckets();
+    const bucketExists = buckets?.some(bucket => bucket.name === 'avatars');
+    
+    if (!bucketExists) {
+      // Create the bucket if it doesn't exist
+      await supabase.storage.createBucket('avatars', {
+        public: true,
+        fileSizeLimit: 5242880 // 5MB limit
+      });
+      console.log('Created avatars bucket');
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error ensuring avatar bucket exists:', error);
+    return false;
+  }
 };
 
 /**
@@ -26,34 +44,56 @@ export const uploadAvatarImage = async (
     await ensureAvatarBucket();
     
     // Create a unique file path
-    const fileExt = file.name.split('.').pop();
+    const fileExt = file.name.split('.').pop() || 'jpg';
     const filePath = `${userId}/avatar-${Date.now()}.${fileExt}`;
     
-    // Upload the file to the avatars bucket
-    const { data, error } = await supabase.storage
-      .from('avatars')
-      .upload(filePath, file, {
-        cacheControl: '3600',
-        upsert: true,
-        contentType: file.type,
-        ...(progressCallback && { 
-          onUploadProgress: (progress) => {
-            progressCallback(progress.percent || 0);
-          }
-        })
-      });
+    // Upload with retries
+    let retries = 3;
+    let error = null;
     
-    if (error) {
-      console.error('Error uploading avatar:', error);
-      throw error;
+    while (retries > 0) {
+      try {
+        // Upload the file to the avatars bucket
+        const { data, error: uploadError } = await supabase.storage
+          .from('avatars')
+          .upload(filePath, file, {
+            cacheControl: '3600',
+            upsert: true,
+            contentType: file.type,
+            ...(progressCallback && { 
+              onUploadProgress: (progress) => {
+                progressCallback(progress.percent || 0);
+              }
+            })
+          });
+        
+        if (uploadError) throw uploadError;
+        
+        // Get the public URL
+        const { data: urlData } = supabase.storage
+          .from('avatars')
+          .getPublicUrl(data.path);
+        
+        if (!urlData || !urlData.publicUrl) {
+          throw new Error('Failed to get public URL');
+        }
+        
+        console.log('Avatar upload successful:', urlData.publicUrl);
+        return urlData.publicUrl;
+      } catch (err) {
+        console.error('Avatar upload attempt failed:', err);
+        error = err;
+        retries--;
+        
+        if (retries > 0) {
+          // Wait before retrying
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          console.log(`Retrying avatar upload, attempts left: ${retries}`);
+        }
+      }
     }
     
-    // Get the public URL
-    const { data: urlData } = supabase.storage
-      .from('avatars')
-      .getPublicUrl(data.path);
-    
-    return urlData.publicUrl;
+    throw error || new Error('Failed to upload avatar after multiple attempts');
   } catch (error) {
     console.error('Error in uploadAvatarImage:', error);
     throw error;

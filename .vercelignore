@@ -1,0 +1,7 @@
+# Игнорировать платформо-зависимые модули Rollup
+@rollup/rollup-linux-*
+@rollup/rollup-darwin-*
+@rollup/rollup-win32-*
+node_modules/@rollup/rollup-linux-*
+node_modules/@rollup/rollup-darwin-*
+node_modules/@rollup/rollup-win32-*

@@ -3,7 +3,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import * as translations from '@/translations';
 
 // Define Language type based on the available translation keys
-export type Language = 'en' | 'uk' | 'ru' | 'de';
+export type Language = 'en' | 'uk' | 'ru' | 'de' | 'be';
 
 interface LanguageContextProps {
   language: Language;
@@ -17,7 +17,7 @@ export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }
   // Try to get the language from localStorage, default to 'en'
   const [language, setLanguage] = useState<Language>(() => {
     const savedLanguage = localStorage.getItem('language') as Language;
-    return (savedLanguage && ['en', 'ru', 'uk', 'de'].includes(savedLanguage)) 
+    return (savedLanguage && ['en', 'ru', 'uk', 'de', 'be'].includes(savedLanguage)) 
       ? savedLanguage as Language 
       : 'en';
   });
